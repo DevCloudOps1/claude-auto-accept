@@ -3,7 +3,7 @@
   "displayName": "AI Auto-Accept",
   "description": "Auto-answers permission prompts from Claude Code, Codex, Gemini, Amazon Q, Aider and other AI CLIs running in VS Code terminals, with a dangerous-command deny-list.",
   "version": "0.1.0",
-  "publisher": "deop",
+  "publisher": "DevCloudOps",
   "icon": "images/icon.png",
   "engines": {
     "vscode": "^1.93.0"
@@ -177,5 +177,8 @@
     "@types/vscode": "^1.93.0",
     "@vscode/test-electron": "^3.1.0",
     "typescript": "^5.5.4"
+  },
+  "author": {
+    "name": "DevCloudOps"
   }
 }
