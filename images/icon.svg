@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <rect x="8" y="8" width="240" height="240" rx="48" fill="#12805c"/>
+  <!-- check mark, nudged up so the badges fit underneath -->
+  <path d="M62 104 L106 146 L194 58" fill="none" stroke="#fff" stroke-width="26" stroke-linecap="round" stroke-linejoin="round"/>
+  <g stroke="#0b5c42" stroke-width="5">
+    <circle cx="64" cy="200" r="30" fill="#fff"/>
+    <circle cx="128" cy="200" r="30" fill="#fff"/>
+    <circle cx="192" cy="200" r="30" fill="#fff"/>
+  </g>
+  <!-- Claude-style: orange 8-ray burst -->
+  <g transform="translate(64 200)" stroke="#d9773f" stroke-width="6" stroke-linecap="round">
+    <path d="M0 -18V18M-18 0H18M-12.7 -12.7L12.7 12.7M-12.7 12.7L12.7 -12.7"/>
+  </g>
+  <!-- Copilot-style: goggles -->
+  <g transform="translate(128 200)" fill="none" stroke="#6e40c9" stroke-width="5">
+    <rect x="-21" y="-11" width="18" height="16" rx="6"/>
+    <rect x="3" y="-11" width="18" height="16" rx="6"/>
+    <path d="M-3 -4H3M-16 5 Q0 18 16 5" stroke-linecap="round"/>
+  </g>
+  <!-- Amazon Q-style: Q letterform -->
+  <g transform="translate(192 200)" fill="none" stroke="#1f6fd1" stroke-width="6" stroke-linecap="round">
+    <circle r="13" cx="-1" cy="-1"/>
+    <path d="M3 3L15 15"/>
+  </g>
+</svg>
