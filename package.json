@@ -1,0 +1,115 @@
+{
+  "name": "claude-auto-accept",
+  "displayName": "AI Auto-Accept",
+  "description": "Automatically accepts common approval and continue prompts from Claude, Copilot, Amazon Q, and other AI assistants in VS Code terminals.",
+  "version": "0.1.0",
+  "publisher": "deop",
+  "icon": "images/icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://example.com/claude-auto-accept"
+  },
+  "engines": {
+    "vscode": "^1.92.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "claude",
+    "copilot",
+    "amazon q",
+    "ai",
+    "auto-accept",
+    "terminal",
+    "approval",
+    "automation"
+  ],
+  "activationEvents": [
+    "onStartupFinished",
+    "onCommand:ai-auto-accept.enable",
+    "onCommand:ai-auto-accept.disable",
+    "onCommand:ai-auto-accept.toggle",
+    "onCommand:claude-auto-accept.enable",
+    "onCommand:claude-auto-accept.disable",
+    "onCommand:claude-auto-accept.toggle"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "ai-auto-accept.enable",
+        "title": "AI Auto-Accept: Enable"
+      },
+      {
+        "command": "ai-auto-accept.disable",
+        "title": "AI Auto-Accept: Disable"
+      },
+      {
+        "command": "ai-auto-accept.toggle",
+        "title": "AI Auto-Accept: Toggle"
+      },
+      {
+        "command": "claude-auto-accept.enable",
+        "title": "Claude Auto-Accept: Enable (legacy)"
+      },
+      {
+        "command": "claude-auto-accept.disable",
+        "title": "Claude Auto-Accept: Disable (legacy)"
+      },
+      {
+        "command": "claude-auto-accept.toggle",
+        "title": "Claude Auto-Accept: Toggle (legacy)"
+      }
+    ],
+    "configuration": {
+      "title": "Claude Auto-Accept",
+      "properties": {
+        "claudeAutoAccept.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically accept AI approval prompts in VS Code terminal sessions."
+        },
+        "claudeAutoAccept.forceLocalOverride": {
+          "type": "boolean",
+          "default": true,
+          "description": "Always auto-approve matching prompts locally, even if a remote AI service or server-side setting disables its own auto-approve flow."
+        },
+        "claudeAutoAccept.promptPatterns": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "allow.*claude.*(run|execute|command)",
+            "approve.*command",
+            "allow.*(this|that|the) command",
+            "continue\\?",
+            "would you like to continue",
+            "would you like to proceed",
+            "do you want to continue",
+            "do you want to proceed",
+            "are you sure",
+            "confirm\\?",
+            "accept\\?",
+            "proceed\\?",
+            "\\[y/n\\]",
+            "\\[Y/n\\]",
+            "(yes/no|y/n)"
+          ],
+          "description": "Regular expressions used to identify permission prompts."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.12",
+    "@types/vscode": "^1.92.0",
+    "typescript": "^5.5.4"
+  }
+}
