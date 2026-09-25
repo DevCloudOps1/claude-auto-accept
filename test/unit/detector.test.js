@@ -169,3 +169,24 @@ test('package.json denyList default matches the built-in list', () => {
   const pkg = require('../../package.json');
   assert.deepStrictEqual(pkg.contributes.configuration.properties['claudeAutoAccept.denyList'].default, DEFAULT_DENY_LIST);
 });
+
+const cmdBox = (cmd) => `╭────────╮\n│ Bash command │\n│   ${cmd} │\n│ Do you want to proceed? │\n│ ❯ 1. Yes │\n│   2. No │\n╰────────╯`;
+test('deny list: destructive database and infrastructure commands always ask', () => {
+  for (const cmd of [
+    'psql -c "DROP TABLE users"', 'mysql -e "drop database shop"', 'psql -c "DELETE FROM orders WHERE id > 5"',
+    'sqlite3 app.db "delete from sessions"', 'psql -c "TRUNCATE TABLE logs"', 'psql -c "truncate users"',
+    'psql -c "UPDATE users SET role=\'admin\'"', 'psql -c "ALTER TABLE users DROP COLUMN email"', 'dropdb prod',
+    'mongosh --eval "db.dropDatabase()"', 'mongosh --eval "db.users.deleteMany({})"', 'mongosh --eval "db.users.drop()"',
+    'redis-cli FLUSHALL', 'npx prisma migrate reset --force', 'npx prisma db push --accept-data-loss', 'rails db:drop',
+    'php artisan migrate:fresh', 'python manage.py flush', 'supabase db reset', 'terraform destroy -auto-approve',
+    'kubectl delete namespace prod', 'helm uninstall api', 'aws s3 rm s3://bucket --recursive',
+    'aws rds delete-db-instance --db-instance-identifier x', 'docker volume prune -f',
+  ]) assert.ok(detect(cmdBox(cmd)).blocked, cmd);
+});
+
+test('deny list: ordinary database reads and safe commands are still accepted', () => {
+  for (const cmd of [
+    'psql -c "SELECT * FROM users"', 'psql -c "UPDATE users SET name=\'x\' WHERE id=1"', 'npx prisma migrate dev',
+    'rails db:migrate', 'kubectl get pods', 'docker ps', 'npm test', 'git status', 'terraform plan', 'aws s3 ls',
+  ]) assert.deepStrictEqual(detect(cmdBox(cmd)).keys, ['\r'], cmd);
+});

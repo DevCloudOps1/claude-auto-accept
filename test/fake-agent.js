@@ -14,6 +14,8 @@ const SCENARIOS = {
     '  3. No, and tell Claude what to do differently (esc)']),
   'claude-dangerous': box(['Bash command', '', '  rm -rf ~/', '  Clean up', '', 'Do you want to proceed?',
     `${E}36m❯ 1. Yes${E}39m`, '  3. No, and tell Claude what to do differently (esc)']),
+  'claude-db-delete': box(['Bash command', '', '  psql $DATABASE_URL -c "DELETE FROM customers WHERE created_at < now()"', '  Clean old rows', '',
+    'Do you want to proceed?', `${E}36m❯ 1. Yes${E}39m`, '  2. No, and tell Claude what to do differently (esc)']),
   'codex': [ 'Allow command?', '', '  $ cargo build', '',
     `${E}1m› 1. Yes, proceed (y)${E}22m`, '  2. Yes, and don\'t ask again for this command (a)', '  3. No, and tell Codex what to do differently (esc)'].join('\r\n'),
   'gemini': box(['? Shell  npm install lodash', '', 'Allow execution of: \'npm\'?', '',

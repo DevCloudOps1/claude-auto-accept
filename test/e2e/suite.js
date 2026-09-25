@@ -11,7 +11,7 @@ const CASES = [
   ['codex', 'accept'], ['gemini', 'accept'], ['amazonq', 'accept'], ['aider', 'accept'],
   ['generic-yn', 'accept'], ['plain-output', 'none'],
   ['claude-trust', 'accept'], ['claude-cursor-moved', 'accept'], ['codex-dangerous', 'none'],
-  ['chunked', 'accept'], ['stuck', 'capped'], ['generic-default-no', 'none'],
+  ['claude-db-delete', 'none'], ['chunked', 'accept'], ['stuck', 'capped'], ['generic-default-no', 'none'],
   // Same accept-worthy prompt, but from a command that is not an AI agent: must be left alone.
   ['generic-yn', 'none', 'not-an-agent.js'],
 ];
