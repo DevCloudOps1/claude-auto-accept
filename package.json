@@ -1,5 +1,5 @@
 {
-  "name": "claude-auto-accept",
+  "name": "ai-auto-accept",
   "displayName": "AI Auto-Accept",
   "description": "Auto-answers permission prompts from Claude Code, Codex, Gemini, Amazon Q, Aider and other AI CLIs running in VS Code terminals, with a dangerous-command deny-list.",
   "version": "0.1.0",
