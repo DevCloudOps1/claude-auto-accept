@@ -5,3 +5,4 @@ tsconfig.json
 .gitignore
 node_modules/**
 images/*.svg
+.github/**
