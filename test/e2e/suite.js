@@ -10,9 +10,12 @@ const CASES = [
   ['claude-bash', 'accept'], ['claude-edit', 'accept'], ['claude-dangerous', 'none'],
   ['codex', 'accept'], ['gemini', 'accept'], ['amazonq', 'accept'], ['aider', 'accept'],
   ['generic-yn', 'accept'], ['plain-output', 'none'],
+  ['claude-trust', 'accept'], ['claude-cursor-moved', 'accept'], ['codex-dangerous', 'none'],
+  ['chunked', 'accept'], ['stuck', 'capped'],
 ];
 const ACCEPT_KEYS = { 'claude-bash': ['\r', '1'], 'claude-edit': ['\r', '1'], codex: ['\r', 'y', '1'],
-  gemini: ['\r', '1'], amazonq: ['y\r', 'y\n', 'y'], aider: ['y\r', 'y\n', '\r'], 'generic-yn': ['y\r', 'y\n', '\r'] };
+  gemini: ['\r', '1'], amazonq: ['y\r', 'y\n', 'y'], aider: ['y\r', 'y\n', '\r'], 'generic-yn': ['y\r', 'y\n', '\r'],
+  'claude-trust': ['\r', '1'], 'claude-cursor-moved': ['1'], chunked: ['\r', '1'] };
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const trimKeys = (k) => k.replace(/\n$/, '\r');
@@ -41,8 +44,9 @@ exports.run = async function () {
     const r = await waitFor(out, 10000);
     const keys = r ? r.keys : null;
     const accepted = !!keys && (ACCEPT_KEYS[scenario] || []).some((k) => trimKeys(keys) === trimKeys(k));
-    const pass = expect === 'accept' ? accepted : r !== null && keys === '';
-    results.push({ scenario, expect, shellIntegration: !!si, keys, ms: r && r.ms, pass });
+    // 'capped': answered at least once, but must give up (<=3 presses) on a prompt that never goes away.
+    const pass = expect === 'accept' ? accepted : expect === 'capped' ? !!r && r.presses >= 1 && r.presses <= 3 : r !== null && keys === '';
+    results.push({ scenario, expect, shellIntegration: !!si, keys, presses: r && r.presses, ms: r && r.ms, pass });
     term.dispose();
     await sleep(300);
   }
