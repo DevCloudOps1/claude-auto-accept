@@ -2,3 +2,4 @@ node_modules/
 out/
 .vscode-test/
 .DS_Store
+test/e2e/results.json

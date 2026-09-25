@@ -105,11 +105,13 @@
   "scripts": {
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./"
+    "watch": "tsc -watch -p ./",
+    "test:e2e": "npm run compile && node test/e2e/run.js"
   },
   "devDependencies": {
     "@types/node": "^20.14.12",
     "@types/vscode": "^1.92.0",
+    "@vscode/test-electron": "^3.1.0",
     "typescript": "^5.5.4"
   }
 }
