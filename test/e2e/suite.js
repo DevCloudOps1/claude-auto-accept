@@ -11,7 +11,9 @@ const CASES = [
   ['codex', 'accept'], ['gemini', 'accept'], ['amazonq', 'accept'], ['aider', 'accept'],
   ['generic-yn', 'accept'], ['plain-output', 'none'],
   ['claude-trust', 'accept'], ['claude-cursor-moved', 'accept'], ['codex-dangerous', 'none'],
-  ['chunked', 'accept'], ['stuck', 'capped'],
+  ['chunked', 'accept'], ['stuck', 'capped'], ['generic-default-no', 'none'],
+  // Same accept-worthy prompt, but from a command that is not an AI agent: must be left alone.
+  ['generic-yn', 'none', 'not-an-agent.js'],
 ];
 const ACCEPT_KEYS = { 'claude-bash': ['\r', '1'], 'claude-edit': ['\r', '1'], codex: ['\r', 'y', '1'],
   gemini: ['\r', '1'], amazonq: ['y\r', 'y\n', 'y'], aider: ['y\r', 'y\n', '\r'], 'generic-yn': ['y\r', 'y\n', '\r'],
@@ -29,24 +31,24 @@ async function waitFor(file, ms) {
 exports.run = async function () {
   const ext = vscode.extensions.all.find((e) => e.extensionPath === path.resolve(__dirname, '../..'));
   if (ext && !ext.isActive) await ext.activate();
-  const agent = path.resolve(__dirname, '../fake-agent.js');
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'aaa-res-'));
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'aaa-res-'));
   const results = [];
-  for (const [scenario, expect] of CASES) {
+  for (const [scenario, expect, script = 'fake-agent.js'] of CASES) {
     const term = vscode.window.createTerminal({ name: `e2e-${scenario}` });
     term.show();
     const si = term.shellIntegration || await new Promise((res) => {
       const d = vscode.window.onDidChangeTerminalShellIntegration((e) => { if (e.terminal === term) { d.dispose(); res(e.shellIntegration); } });
       setTimeout(() => res(undefined), 8000);
     });
-    const out = path.join(tmp, scenario + '.json');
+    const out = path.join(tmp, `${scenario}-${script}.json`);
+    const agent = path.resolve(__dirname, '..', script);
     term.sendText(`node "${agent}" ${scenario} "${out}"`, true);
     const r = await waitFor(out, 10000);
     const keys = r ? r.keys : null;
-    const accepted = !!keys && (ACCEPT_KEYS[scenario] || []).some((k) => trimKeys(keys) === trimKeys(k));
+    const accepted = expect === 'accept' && !!keys && (ACCEPT_KEYS[scenario] || []).some((k) => trimKeys(keys) === trimKeys(k));
     // 'capped': answered at least once, but must give up (<=3 presses) on a prompt that never goes away.
     const pass = expect === 'accept' ? accepted : expect === 'capped' ? !!r && r.presses >= 1 && r.presses <= 3 : r !== null && keys === '';
-    results.push({ scenario, expect, shellIntegration: !!si, keys, presses: r && r.presses, ms: r && r.ms, pass });
+    results.push({ scenario, script, expect, shellIntegration: !!si, keys, presses: r && r.presses, ms: r && r.ms, pass });
     term.dispose();
     await sleep(300);
   }
@@ -54,6 +56,6 @@ exports.run = async function () {
   fs.writeFileSync(outFile, JSON.stringify(results, null, 2));
   const passed = results.filter((r) => r.pass).length;
   console.log(`E2E ${passed}/${results.length} passed`);
-  for (const r of results) console.log(`${r.pass ? 'PASS' : 'FAIL'} ${r.scenario} expect=${r.expect} keys=${JSON.stringify(r.keys)} si=${r.shellIntegration} ms=${r.ms}`);
+  for (const r of results) console.log(`${r.pass ? 'PASS' : 'FAIL'} ${r.scenario}${r.script === 'fake-agent.js' ? '' : ' via ' + r.script} expect=${r.expect} keys=${JSON.stringify(r.keys)} si=${r.shellIntegration} ms=${r.ms}`);
   if (passed !== results.length) throw new Error(`${results.length - passed} e2e scenario(s) failed`);
 };

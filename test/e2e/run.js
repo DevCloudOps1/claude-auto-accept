@@ -13,6 +13,8 @@ const { runTests } = require('@vscode/test-electron');
     'terminal.integrated.profiles.osx': { bash: { path: '/bin/bash', args: [] } },
     'terminal.integrated.shellIntegration.enabled': true,
     'workbench.startupEditor': 'none',
+    // Treat the fake agent like a real AI CLI; the default list only matches real agent binaries.
+    'claudeAutoAccept.agentCommands': '^(claude|codex|fake-agent\\.js)$',
   }));
   const ws = fs.mkdtempSync(path.join(os.tmpdir(), 'aaa-ws-'));
   try {

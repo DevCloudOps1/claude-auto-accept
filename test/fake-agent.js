@@ -27,6 +27,7 @@ const SCENARIOS = {
     '› 1. Yes, proceed (y)', '  2. No, and tell Codex what to do differently (esc)'].join('\r\n'),
   'amazonq': 'Allow this action? Use \'t\' to trust (always allow) this tool for the session. [y/n/t]:\r\n\r\n> ',
   'aider': 'Add src/app.py to the chat? (Y)es/(N)o/(D)on\'t ask again [Yes]: ',
+  'generic-default-no': 'This will reset your database. All data will be lost. Continue? (y/N) ',
   'generic-yn': 'The following packages will be installed. Continue? [Y/n] ',
   // Must NOT be answered: ordinary output that merely contains trigger-ish words.
   'plain-output': [ 'Running tests...', 'Do you want to know more? See docs.', 'Would you like to learn more about proceeding: visit example.com', 'Done.', ''].join('\r\n'),

@@ -1,38 +1,30 @@
 {
   "name": "claude-auto-accept",
   "displayName": "AI Auto-Accept",
-  "description": "Automatically accepts common approval and continue prompts from Claude, Copilot, Amazon Q, and other AI assistants in VS Code terminals.",
+  "description": "Auto-answers permission prompts from Claude Code, Codex, Gemini, Amazon Q, Aider and other AI CLIs running in VS Code terminals, with a dangerous-command deny-list.",
   "version": "0.1.0",
   "publisher": "deop",
   "icon": "images/icon.png",
-  "repository": {
-    "type": "git",
-    "url": "https://example.com/claude-auto-accept"
-  },
   "engines": {
-    "vscode": "^1.92.0"
+    "vscode": "^1.93.0"
   },
   "categories": [
     "Other"
   ],
   "keywords": [
     "claude",
-    "copilot",
+    "codex",
+    "gemini",
     "amazon q",
+    "aider",
+    "copilot",
     "ai",
     "auto-accept",
     "terminal",
-    "approval",
-    "automation"
+    "approval"
   ],
   "activationEvents": [
-    "onStartupFinished",
-    "onCommand:ai-auto-accept.enable",
-    "onCommand:ai-auto-accept.disable",
-    "onCommand:ai-auto-accept.toggle",
-    "onCommand:claude-auto-accept.enable",
-    "onCommand:claude-auto-accept.disable",
-    "onCommand:claude-auto-accept.toggle"
+    "onStartupFinished"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -50,6 +42,14 @@
         "title": "AI Auto-Accept: Toggle"
       },
       {
+        "command": "ai-auto-accept.showLog",
+        "title": "AI Auto-Accept: Show Log"
+      },
+      {
+        "command": "ai-auto-accept.configureNativeAutoApprove",
+        "title": "AI Auto-Accept: Configure Native Auto-Approve (Copilot / Claude Code panel)"
+      },
+      {
         "command": "claude-auto-accept.enable",
         "title": "Claude Auto-Accept: Enable (legacy)"
       },
@@ -63,41 +63,104 @@
       }
     ],
     "configuration": {
-      "title": "Claude Auto-Accept",
+      "title": "AI Auto-Accept",
       "properties": {
         "claudeAutoAccept.enabled": {
           "type": "boolean",
           "default": true,
-          "description": "Automatically accept AI approval prompts in VS Code terminal sessions."
+          "description": "Automatically answer recognised AI agent permission prompts in VS Code terminals."
         },
-        "claudeAutoAccept.forceLocalOverride": {
-          "type": "boolean",
-          "default": true,
-          "description": "Always auto-approve matching prompts locally, even if a remote AI service or server-side setting disables its own auto-approve flow."
+        "claudeAutoAccept.agents": {
+          "type": "object",
+          "default": {
+            "claude": true,
+            "codex": true,
+            "gemini": true,
+            "amazonq": true,
+            "aider": true,
+            "generic": true
+          },
+          "properties": {
+            "claude": {
+              "type": "boolean",
+              "default": true
+            },
+            "codex": {
+              "type": "boolean",
+              "default": true
+            },
+            "gemini": {
+              "type": "boolean",
+              "default": true
+            },
+            "amazonq": {
+              "type": "boolean",
+              "default": true
+            },
+            "aider": {
+              "type": "boolean",
+              "default": true
+            },
+            "generic": {
+              "type": "boolean",
+              "default": true
+            }
+          },
+          "additionalProperties": false,
+          "description": "Enable or disable auto-accept per agent. \"generic\" covers plain [Y/n], (y/N) and [yes/no] prompts."
+        },
+        "claudeAutoAccept.denyList": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "\\brm\\s+(\\S+\\s+)*(-[a-zA-Z]*[rR][a-zA-Z]*|--recursive|--no-preserve-root)\\b",
+            "\\bgit\\s+push\\b.*(--force|\\s-f\\b|\\s\\+\\S)",
+            "\\bgit\\s+reset\\s+--hard",
+            "\\bgit\\s+clean\\s+-[a-zA-Z]*f",
+            "\\bfind\\b.*\\s-delete\\b",
+            "\\b(curl|wget)\\b[^|]*\\|\\s*(sudo\\s+)?((ba|z|da|fi)?sh|python\\d*|node|perl|ruby)\\b",
+            "\\bdd\\s+.*\\bof=",
+            "\\bmkfs\\b",
+            "\\bchmod\\s+(-\\S+\\s+)*777",
+            "\\bdrop\\s+(table|database|schema)\\b",
+            ">\\s*/dev/(sd|nvme|disk)",
+            ":\\(\\)\\s*\\{.*\\};\\s*:"
+          ],
+          "description": "Regular expressions (case-insensitive). A prompt whose text matches any of these is never auto-accepted; answer it yourself.",
+          "scope": "machine"
+        },
+        "claudeAutoAccept.agentCommands": {
+          "type": "string",
+          "default": "^(claude(-code)?|codex|gemini(-cli)?|q|qchat|aider|copilot|opencode)$",
+          "description": "Regular expression matched against the program name of each terminal command (e.g. \"claude\" in \"npx @anthropic-ai/claude-code\" \u2192 \"claude-code\"; paths and arguments are ignored). Only matching commands (AI agent CLIs) are watched, so prompts from other tools (apt, npm, prisma...) are never answered. Set to \".*\" to watch everything (not recommended).",
+          "scope": "machine"
         },
         "claudeAutoAccept.promptPatterns": {
           "type": "array",
           "items": {
             "type": "string"
           },
-          "default": [
-            "allow.*claude.*(run|execute|command)",
-            "approve.*command",
-            "allow.*(this|that|the) command",
-            "continue\\?",
-            "would you like to continue",
-            "would you like to proceed",
-            "do you want to continue",
-            "do you want to proceed",
-            "are you sure",
-            "confirm\\?",
-            "accept\\?",
-            "proceed\\?",
-            "\\[y/n\\]",
-            "\\[Y/n\\]",
-            "(yes/no|y/n)"
-          ],
-          "description": "Regular expressions used to identify permission prompts."
+          "default": [],
+          "description": "Extra regular expressions for prompts to answer with \"y\" + Enter. Invalid expressions are skipped and logged.",
+          "scope": "machine"
+        },
+        "claudeAutoAccept.dryRun": {
+          "type": "boolean",
+          "default": false,
+          "description": "Log what would be sent without sending any keys."
+        },
+        "claudeAutoAccept.copilotChat": {
+          "type": "boolean",
+          "default": false,
+          "description": "Every 1.5s run \"workbench.action.chat.acceptTool\" to accept pending Copilot chat tool confirmations. The deny-list does not apply here."
+        },
+        "claudeAutoAccept.maxRepeat": {
+          "type": "number",
+          "default": 3,
+          "minimum": 1,
+          "description": "Stop answering a prompt that keeps reappearing unchanged after this many answers, until different output appears."
         }
       }
     }
@@ -106,11 +169,12 @@
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "test:e2e": "npm run compile && node test/e2e/run.js"
+    "test:e2e": "npm run compile && node test/e2e/run.js",
+    "test:unit": "npm run compile && node --test test/unit/*.test.js"
   },
   "devDependencies": {
     "@types/node": "^20.14.12",
-    "@types/vscode": "^1.92.0",
+    "@types/vscode": "^1.93.0",
     "@vscode/test-electron": "^3.1.0",
     "typescript": "^5.5.4"
   }

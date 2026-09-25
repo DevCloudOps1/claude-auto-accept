@@ -3,3 +3,5 @@ out/
 .vscode-test/
 .DS_Store
 test/e2e/results.json
+test/e2e/results*.json
+*.vsix
