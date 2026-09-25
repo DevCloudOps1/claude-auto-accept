@@ -2,7 +2,7 @@
   "name": "ai-auto-accept",
   "displayName": "AI Auto-Accept",
   "description": "Auto-answers permission prompts from Claude Code, Codex, Gemini, Amazon Q, Aider and other AI CLIs running in VS Code terminals, with a dangerous-command deny-list.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "DevCloudOps",
   "icon": "images/icon.png",
   "engines": {
@@ -47,7 +47,7 @@
       },
       {
         "command": "ai-auto-accept.configureNativeAutoApprove",
-        "title": "AI Auto-Accept: Configure Native Auto-Approve (Copilot / Claude Code panel)"
+        "title": "AI Auto-Accept: Set Up Chat Auto-Approve (VS Code chat / Copilot / Claude Code panel)"
       },
       {
         "command": "claude-auto-accept.enable",
@@ -134,7 +134,7 @@
         "claudeAutoAccept.agentCommands": {
           "type": "string",
           "default": "^(claude(-code)?|codex|gemini(-cli)?|q|qchat|aider|copilot|opencode)$",
-          "description": "Regular expression matched against the program name of each terminal command (e.g. \"claude\" in \"npx @anthropic-ai/claude-code\" \u2192 \"claude-code\"; paths and arguments are ignored). Only matching commands (AI agent CLIs) are watched, so prompts from other tools (apt, npm, prisma...) are never answered. Set to \".*\" to watch everything (not recommended).",
+          "description": "Regular expression matched against the program name of each terminal command (e.g. \"claude\" in \"npx @anthropic-ai/claude-code\" → \"claude-code\"; paths and arguments are ignored). Only matching commands (AI agent CLIs) are watched, so prompts from other tools (apt, npm, prisma...) are never answered. Set to \".*\" to watch everything (not recommended).",
           "scope": "machine"
         },
         "claudeAutoAccept.promptPatterns": {
@@ -150,11 +150,6 @@
           "type": "boolean",
           "default": false,
           "description": "Log what would be sent without sending any keys."
-        },
-        "claudeAutoAccept.copilotChat": {
-          "type": "boolean",
-          "default": false,
-          "description": "Every 1.5s run \"workbench.action.chat.acceptTool\" to accept pending Copilot chat tool confirmations. The deny-list does not apply here."
         },
         "claudeAutoAccept.maxRepeat": {
           "type": "number",

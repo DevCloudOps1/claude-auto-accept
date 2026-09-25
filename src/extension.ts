@@ -12,7 +12,6 @@ let accepted = 0;
 let noShellIntegrationWarned = false;
 let statusBar: vscode.StatusBarItem;
 let log: vscode.OutputChannel;
-let copilotTimer: NodeJS.Timeout | undefined;
 
 const cfg = () => vscode.workspace.getConfiguration('claudeAutoAccept');
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -81,22 +80,6 @@ function setEnabled(next: boolean): void {
   cfg().update('enabled', next, target).then(undefined, (err) => say(`Could not save enabled=${next}: ${(err as Error).message}`));
   say(`Auto-accept ${next ? 'enabled' : 'disabled'}`);
   updateStatusBar();
-  syncCopilotPolling();
-}
-
-function syncCopilotPolling(): void {
-  const want = enabled && cfg().get<boolean>('copilotChat', false);
-  if (want && !copilotTimer) {
-    copilotTimer = setInterval(() => {
-      // No-op when no tool confirmation is pending; errors (e.g. command missing) are ignored.
-      vscode.commands.executeCommand('workbench.action.chat.acceptTool').then(undefined, () => undefined);
-    }, 1500);
-    say('Copilot chat tool auto-accept polling started');
-  } else if (!want && copilotTimer) {
-    clearInterval(copilotTimer);
-    copilotTimer = undefined;
-    say('Copilot chat tool auto-accept polling stopped');
-  }
 }
 
 // The question plus its command block (from the box border above it; for Codex, which has no box, the few lines
@@ -237,46 +220,90 @@ function checkShellIntegration(terminal: vscode.Terminal): void {
   }, 10000);
 }
 
-async function configureNativeAutoApprove(): Promise<void> {
-  const choice = await vscode.window.showWarningMessage(
-    'Turn on native auto-approve for chat panels?',
-    {
-      modal: true,
-      detail:
-        'This updates your USER settings:\n\n' +
-        '• chat.tools.global.autoApprove = true: GitHub Copilot agent mode runs tools (including terminal commands) without asking.\n' +
-        '• claudeCode.initialPermissionMode = "acceptEdits": the Claude Code panel accepts file edits without asking (commands still prompt).\n\n' +
-        'These panels are webviews that terminal watching cannot see. The deny-list does NOT apply to them. You can revert both settings in Settings at any time.',
-    },
-    'Apply',
+// Chat panels (VS Code chat / Copilot, Claude Code panel) are not terminals, so they are covered through their own
+// approval settings. Polling 'workbench.action.chat.acceptTool' does not work: it only sees the last-focused chat
+// and moves keyboard focus into the chat input on every call.
+type ChatLevel = 'recommended' | 'everything' | 'undo';
+const BACKUP_KEY = 'chatSettingsBackup';
+let extContext: vscode.ExtensionContext;
+
+function chatSettings(level: 'recommended' | 'everything'): [string, unknown][] {
+  const g = <T>(key: string) => vscode.workspace.getConfiguration().inspect<T>(key)?.globalValue;
+  // VS Code's own terminal rules: "/regex/i": true approves, a false rule always wins. Our deny-list becomes false
+  // rules matched against the whole command line, so `rm -rf`, `git push --force`... still ask in chat.
+  const deny = Object.fromEntries(userSetting('denyList', DEFAULT_DENY_LIST).map((src) => [`/${src}/i`, { approve: false, matchCommandLine: true }]));
+  const out: [string, unknown][] = [
+    ['chat.tools.terminal.enableAutoApprove', true],
+    ['chat.tools.terminal.autoApprove', { ...g<object>('chat.tools.terminal.autoApprove'), '/.*/': true, ...deny }],
+    // Avoid the "Continue to iterate?" stop after 50 requests.
+    ['chat.agent.maxRequests', Math.max(g<number>('chat.agent.maxRequests') ?? 0, 200)],
+  ];
+  const claude = !!vscode.extensions.getExtension('anthropic.claude-code');
+  if (level === 'recommended') {
+    if (claude) out.push(['claudeCode.initialPermissionMode', 'acceptEdits']);
+    return out;
+  }
+  out.push(
+    // New chat sessions start in "Bypass Approvals": every tool runs without asking. No deny-list applies here.
+    ['chat.permissions.default', 'autoApprove'],
+    ['chat.defaultConfiguration', { ...g<object>('chat.defaultConfiguration'), approvals: 'allowAll' }],
   );
-  if (choice !== 'Apply') return;
-  // Each setting is applied on its own: one missing extension (unregistered setting) must not hide the other's result.
-  const results = await Promise.all(
-    ([['chat.tools.global', 'autoApprove', true], ['claudeCode', 'initialPermissionMode', 'acceptEdits']] as const).map(
-      async ([section, key, value]) => {
-        try {
-          await vscode.workspace.getConfiguration(section).update(key, value, vscode.ConfigurationTarget.Global);
-          return `${section}.${key} = ${JSON.stringify(value)}: set`;
-        } catch (err) {
-          return `${section}.${key}: NOT set (${(err as Error).message}; is that extension installed?)`;
-        }
-      },
-    ),
-  );
-  results.forEach((r) => say(`Native auto-approve: ${r}`));
-  const failed = results.some((r) => r.includes('NOT set'));
-  (failed ? vscode.window.showWarningMessage : vscode.window.showInformationMessage)(`AI Auto-Accept: ${results.join('; ')}`);
+  if (claude) out.push(['claudeCode.allowDangerouslySkipPermissions', true], ['claudeCode.initialPermissionMode', 'bypassPermissions']);
+  return out;
+}
+
+async function writeSetting(key: string, value: unknown): Promise<string> {
+  try {
+    await vscode.workspace.getConfiguration().update(key, value, vscode.ConfigurationTarget.Global);
+    return `${key}: ${value === undefined ? 'restored' : 'set'}`;
+  } catch (err) {
+    return `${key}: NOT set (${(err as Error).message})`;
+  }
+}
+
+async function configureNativeAutoApprove(arg?: ChatLevel): Promise<void> {
+  let level = arg;
+  if (!level) {
+    const pick = await vscode.window.showQuickPick(
+      [
+        { label: 'Recommended', level: 'recommended' as const, detail: 'Chat runs terminal commands without asking, except commands matching the deny-list (rm -rf, git push --force, ...) and VS Code\'s own risky-command rules. Also stops the "Continue to iterate?" pause.' },
+        { label: 'Everything (Bypass Approvals)', level: 'everything' as const, detail: 'New chat sessions approve every tool call, including risky commands. The deny-list does NOT apply. VS Code shows its own one-time warning.' },
+        { label: 'Undo', level: 'undo' as const, detail: 'Restore the chat settings you had before using this command.' },
+      ],
+      { title: 'AI Auto-Accept: chat panel auto-approve', placeHolder: 'Choose what chat panels may approve on their own (changes your user settings)' },
+    );
+    if (!pick) return;
+    level = pick.level;
+  }
+  const backup = extContext.globalState.get<Record<string, unknown>>(BACKUP_KEY);
+  let results: string[];
+  if (level === 'undo') {
+    if (!backup) return void vscode.window.showInformationMessage('AI Auto-Accept: nothing to undo.');
+    results = await Promise.all(Object.entries(backup).map(([k, v]) => writeSetting(k, v ?? undefined)));
+    await extContext.globalState.update(BACKUP_KEY, undefined);
+  } else {
+    const settings = chatSettings(level);
+    // Remember the values from before our FIRST change, so Undo returns to the user's original state.
+    const saved = { ...backup };
+    for (const [k] of settings) if (!(k in saved)) saved[k] = vscode.workspace.getConfiguration().inspect(k)?.globalValue ?? null;
+    await extContext.globalState.update(BACKUP_KEY, saved);
+    results = [];
+    for (const [k, v] of settings) results.push(await writeSetting(k, v));
+  }
+  results.forEach((r) => say(`Chat auto-approve (${level}): ${r}`));
+  const failed = results.filter((r) => r.includes('NOT set'));
+  const msg = level === 'undo' ? 'Chat settings restored.' : 'Chat auto-approve is set up. Start a NEW chat session: existing sessions keep their approval mode.';
+  (failed.length ? vscode.window.showWarningMessage : vscode.window.showInformationMessage)(`AI Auto-Accept: ${msg}${failed.length ? ` Not applied: ${failed.join('; ')}` : ''}`);
 }
 
 export function activate(context: vscode.ExtensionContext): void {
+  extContext = context;
   log = vscode.window.createOutputChannel('AI Auto-Accept');
   statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
   statusBar.command = 'ai-auto-accept.toggle';
   enabled = cfg().get<boolean>('enabled', true);
   updateStatusBar();
   statusBar.show();
-  syncCopilotPolling();
   say(`Activated; auto-accept is ${enabled ? 'ON' : 'OFF'}${cfg().get<boolean>('dryRun', false) ? ' (dry run)' : ''}`);
 
   const reg = (id: string, fn: () => unknown) => vscode.commands.registerCommand(id, fn);
@@ -293,7 +320,7 @@ export function activate(context: vscode.ExtensionContext): void {
     log,
     statusBar,
     reg('ai-auto-accept.showLog', () => log.show()),
-    reg('ai-auto-accept.configureNativeAutoApprove', configureNativeAutoApprove),
+    vscode.commands.registerCommand('ai-auto-accept.configureNativeAutoApprove', configureNativeAutoApprove),
     vscode.window.onDidStartTerminalShellExecution((e) => {
       watchExecution(e).catch((err) => say(`Stopped reading terminal "${e.terminal.name}": ${(err as Error).message}`));
     }),
@@ -303,9 +330,7 @@ export function activate(context: vscode.ExtensionContext): void {
       cachedOpts = undefined;
       enabled = cfg().get<boolean>('enabled', true);
       updateStatusBar();
-      syncCopilotPolling();
-    }),
-    { dispose: () => copilotTimer && clearInterval(copilotTimer) },
+        }),
   );
 }
 

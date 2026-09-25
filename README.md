@@ -36,16 +36,15 @@ Every decision (accepted, blocked, gave up, dry run) is written to the **AI Auto
 
 ## Chat panels
 
-Terminal watching can't see webview chat UIs. You have two options:
+The VS Code chat (GitHub Copilot agent mode) and the Claude Code panel are not terminals, so the extension can't read their prompts. Run **AI Auto-Accept: Set Up Chat Auto-Approve** instead. It sets each panel's own approval settings in your user settings, and you pick a level:
 
-- **AI Auto-Accept: Configure Native Auto-Approve** asks for confirmation, then sets these user settings:
-  - `chat.tools.global.autoApprove = true`: Copilot agent mode runs tools without asking.
-  - `claudeCode.initialPermissionMode = "acceptEdits"`: the Claude Code panel accepts file edits.
+| Level | What it sets | Deny-list |
+| --- | --- | --- |
+| **Recommended** | `chat.tools.terminal.enableAutoApprove`, and `chat.tools.terminal.autoApprove` with `"/.*/": true` plus one deny rule per deny-list entry. It also raises `chat.agent.maxRequests` to 200, so chat doesn't stop at "Continue to iterate?". If the Claude Code extension is installed, it sets `claudeCode.initialPermissionMode = "acceptEdits"`. | Yes. VS Code checks deny rules first, and its built-in rules for risky commands still apply. |
+| **Everything** | Everything in Recommended, plus `chat.permissions.default = "autoApprove"` (Bypass Approvals) and `chat.defaultConfiguration.approvals = "allowAll"`. With Claude Code installed, it also sets `bypassPermissions`. VS Code shows its own one-time warning. | **No.** Every tool call runs. |
+| **Undo** | Puts back the values these settings had before you first used the command. | |
 
-  Each setting is written separately. If Copilot Chat or the Claude Code extension isn't installed, its setting is skipped and the result is shown in the notification and log.
-- `claudeAutoAccept.copilotChat = true` runs `workbench.action.chat.acceptTool` every 1.5 s, which accepts any pending Copilot tool confirmation.
-
-The deny-list does **not** apply to either option.
+**Start a new chat session after changing the level.** Each existing chat keeps the approval mode it started with. If your organisation's policy disables auto-approve, VS Code ignores these settings.
 
 ## Settings
 
@@ -56,7 +55,6 @@ The deny-list does **not** apply to either option.
   "claudeAutoAccept.denyList": ["\\brm\\s+(-\\S+\\s+)*-[a-zA-Z]*(r[a-zA-Z]*f|f[a-zA-Z]*r)", "..."],
   "claudeAutoAccept.promptPatterns": [],   // extra regexes, answered with y + Enter
   "claudeAutoAccept.dryRun": false,
-  "claudeAutoAccept.copilotChat": false,
   "claudeAutoAccept.maxRepeat": 3
 }
 ```
@@ -67,7 +65,7 @@ The extension logs and skips any invalid regex in `denyList` or `promptPatterns`
 
 - AI Auto-Accept: Enable / Disable / Toggle (the legacy `claude-auto-accept.*` commands still work)
 - AI Auto-Accept: Show Log
-- AI Auto-Accept: Configure Native Auto-Approve
+- AI Auto-Accept: Set Up Chat Auto-Approve
 
 ## Limitations
 
@@ -75,7 +73,7 @@ The extension logs and skips any invalid regex in `denyList` or `promptPatterns`
 - **Requires shell integration.** This is on by default for bash, zsh, fish and PowerShell. If a terminal has no shell integration after 10 s, the extension logs a warning and adds it to the status bar tooltip. That terminal is not watched.
 - Commands that were already running before the extension activated (for example, after a window reload) are missed. Restart the agent to fix this.
 - Detection is pattern-based. A new CLI version that rewords its prompts may stop being recognised until the patterns are updated. Use `promptPatterns` in the meantime.
-- Webview chat panels are only covered through the native settings or the Copilot `acceptTool` polling described above.
+- Chat panels are covered only through their own approval settings, described in [Chat panels](#chat-panels).
 - Requires VS Code 1.93 or later.
 
 ## Development

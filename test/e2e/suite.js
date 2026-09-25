@@ -52,6 +52,25 @@ exports.run = async function () {
     term.dispose();
     await sleep(300);
   }
+  // Chat panel auto-approve: the command must write VS Code's own chat settings, and Undo must restore them.
+  const conf = () => vscode.workspace.getConfiguration();
+  const g = (k) => conf().inspect(k).globalValue;
+  const chatCase = (name, pass, detail) => results.push({ scenario: name, script: 'chat', expect: 'settings', keys: detail, pass: !!pass });
+  await conf().update('chat.agent.maxRequests', 30, vscode.ConfigurationTarget.Global);
+  await vscode.commands.executeCommand('ai-auto-accept.configureNativeAutoApprove', 'recommended');
+  const rules = g('chat.tools.terminal.autoApprove') || {};
+  const denyKey = Object.keys(rules).find((k) => k.includes('git') && k.includes('push'));
+  chatCase('chat-recommended', rules['/.*/'] === true && denyKey && rules[denyKey].approve === false && rules[denyKey].matchCommandLine === true
+    && g('chat.tools.terminal.enableAutoApprove') === true && g('chat.agent.maxRequests') === 200 && g('chat.permissions.default') === undefined,
+    JSON.stringify({ allowAll: rules['/.*/'], denyKey, maxRequests: g('chat.agent.maxRequests'), permissions: g('chat.permissions.default') }));
+  await vscode.commands.executeCommand('ai-auto-accept.configureNativeAutoApprove', 'everything');
+  chatCase('chat-everything', g('chat.permissions.default') === 'autoApprove' && (g('chat.defaultConfiguration') || {}).approvals === 'allowAll',
+    JSON.stringify({ permissions: g('chat.permissions.default'), defaultConfiguration: g('chat.defaultConfiguration') }));
+  await vscode.commands.executeCommand('ai-auto-accept.configureNativeAutoApprove', 'undo');
+  chatCase('chat-undo', g('chat.tools.terminal.autoApprove') === undefined && g('chat.permissions.default') === undefined
+    && g('chat.defaultConfiguration') === undefined && g('chat.agent.maxRequests') === 30,
+    JSON.stringify({ rules: g('chat.tools.terminal.autoApprove'), permissions: g('chat.permissions.default'), maxRequests: g('chat.agent.maxRequests') }));
+
   const outFile = process.env.E2E_RESULTS || path.resolve(__dirname, 'results.json');
   fs.writeFileSync(outFile, JSON.stringify(results, null, 2));
   const passed = results.filter((r) => r.pass).length;
