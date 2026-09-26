@@ -1,4 +1,7 @@
 import * as vscode from 'vscode';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import { stripAnsi, detect, programNames, DEFAULT_DENY_LIST, Detection } from './detector';
 
 const TAIL_CHARS = 4000;
@@ -80,6 +83,7 @@ function setEnabled(next: boolean): void {
   cfg().update('enabled', next, target).then(undefined, (err) => say(`Could not save enabled=${next}: ${(err as Error).message}`));
   say(`Auto-accept ${next ? 'enabled' : 'disabled'}`);
   updateStatusBar();
+  writeHookState();
 }
 
 // The question plus its command block (from the box border above it; for Codex, which has no box, the few lines
@@ -235,20 +239,18 @@ function chatSettings(level: 'recommended' | 'everything'): [string, unknown][] 
   const out: [string, unknown][] = [
     ['chat.tools.terminal.enableAutoApprove', true],
     ['chat.tools.terminal.autoApprove', { ...g<object>('chat.tools.terminal.autoApprove'), '/.*/': true, ...deny }],
-    // Avoid the "Continue to iterate?" stop after 50 requests.
-    ['chat.agent.maxRequests', Math.max(g<number>('chat.agent.maxRequests') ?? 0, 200)],
   ];
-  const claude = !!vscode.extensions.getExtension('anthropic.claude-code');
-  if (level === 'recommended') {
-    if (claude) out.push(['claudeCode.initialPermissionMode', 'acceptEdits']);
-    return out;
-  }
+  // Avoid the "Continue to iterate?" stop after 50 requests.
+  if (level === 'recommended') out.push(['chat.agent.maxRequests', Math.max(g<number>('chat.agent.maxRequests') ?? 0, 200)]);
+  if (level === 'recommended') return out;
   out.push(
-    // New chat sessions start in "Bypass Approvals": every tool runs without asking. No deny-list applies here.
+    // Every chat, including ones already open, approves every tool. VS Code asks the user once to confirm this.
+    ['chat.tools.global.autoApprove', true],
+    // New chat sessions start in "Bypass Approvals" too.
     ['chat.permissions.default', 'autoApprove'],
     ['chat.defaultConfiguration', { ...g<object>('chat.defaultConfiguration'), approvals: 'allowAll' }],
+    ['chat.agent.maxRequests', Math.max(g<number>('chat.agent.maxRequests') ?? 0, 1000)],
   );
-  if (claude) out.push(['claudeCode.allowDangerouslySkipPermissions', true], ['claudeCode.initialPermissionMode', 'bypassPermissions']);
   return out;
 }
 
@@ -261,13 +263,65 @@ async function writeSetting(key: string, value: unknown): Promise<string> {
   }
 }
 
+// Claude Code (panel and CLI) is covered by a PreToolUse hook in ~/.claude/settings.json. The hook script and
+// its state.json live in the extension's global storage, a path that survives extension updates.
+const HOOK_MARK = 'ai-auto-accept-claude-hook';
+const claudeSettingsFile = () => path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), 'settings.json');
+const hookDir = () => extContext.globalStorageUri.fsPath;
+
+// Tells the hook what to do; rewritten whenever the level, the on/off switch or the deny-list changes.
+function writeHookState(): void {
+  const level = extContext.globalState.get<string>('chatLevel');
+  if (!level) return;
+  const agents = cfg().get<Record<string, boolean>>('agents', {});
+  const state = { enabled: enabled && agents.claude !== false, level, deny: userSetting('denyList', DEFAULT_DENY_LIST) };
+  try {
+    fs.mkdirSync(hookDir(), { recursive: true });
+    fs.writeFileSync(path.join(hookDir(), 'state.json'), JSON.stringify(state));
+  } catch (err) {
+    say(`Could not update the Claude Code hook state: ${(err as Error).message}`);
+  }
+}
+
+type HookEntry = { matcher?: string; hooks?: { command?: string }[] };
+function editClaudeSettings(install: boolean): string {
+  const file = claudeSettingsFile();
+  let settings: { hooks?: Record<string, HookEntry[]> } = {};
+  try {
+    if (fs.existsSync(file)) settings = JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch (err) {
+    // Never overwrite a settings file we could not parse.
+    return `${file}: NOT changed (${(err as Error).message})`;
+  }
+  const ours = (e: HookEntry) => !!e.hooks?.some((h) => h.command?.includes(HOOK_MARK));
+  const list = (settings.hooks?.PreToolUse ?? []).filter((e) => !ours(e));
+  if (install) {
+    const script = path.join(hookDir(), `${HOOK_MARK}.js`);
+    fs.mkdirSync(hookDir(), { recursive: true });
+    fs.copyFileSync(path.join(__dirname, 'claude-hook.js'), script);
+    // Run with VS Code's own Node runtime so users don't need Node installed. ponytail: on Windows this needs `node` on PATH.
+    const command = process.platform === 'win32' ? `node "${script}"` : `ELECTRON_RUN_AS_NODE=1 "${process.execPath}" "${script}"`;
+    list.push({ matcher: '*', hooks: [{ type: 'command', command } as { command: string }] });
+  }
+  settings.hooks = { ...settings.hooks, PreToolUse: list };
+  if (!list.length) delete settings.hooks.PreToolUse;
+  if (!Object.keys(settings.hooks).length) delete settings.hooks;
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify(settings, null, 2) + '\n');
+    return `${file}: Claude Code hook ${install ? 'installed' : 'removed'}`;
+  } catch (err) {
+    return `${file}: NOT changed (${(err as Error).message})`;
+  }
+}
+
 async function configureNativeAutoApprove(arg?: ChatLevel): Promise<void> {
   let level = arg;
   if (!level) {
     const pick = await vscode.window.showQuickPick(
       [
-        { label: 'Recommended', level: 'recommended' as const, detail: 'Chat runs terminal commands without asking, except commands matching the deny-list (rm -rf, git push --force, ...) and VS Code\'s own risky-command rules. Also stops the "Continue to iterate?" pause.' },
-        { label: 'Everything (Bypass Approvals)', level: 'everything' as const, detail: 'New chat sessions approve every tool call, including risky commands. The deny-list does NOT apply. VS Code shows its own one-time warning.' },
+        { label: 'Recommended', level: 'recommended' as const, detail: 'VS Code chat runs terminal commands and Claude Code approves its tools without asking, except anything matching the deny-list (rm -rf, git push --force, ...). Also stops the "Continue to iterate?" pause.' },
+        { label: 'Everything (Bypass Approvals)', level: 'everything' as const, detail: 'VS Code chat / Copilot approves every tool call in every chat, including open ones (no deny-list there; VS Code asks you once to confirm). Claude Code still asks for deny-listed commands.' },
         { label: 'Undo', level: 'undo' as const, detail: 'Restore the chat settings you had before using this command.' },
       ],
       { title: 'AI Auto-Accept: chat panel auto-approve', placeHolder: 'Choose what chat panels may approve on their own (changes your user settings)' },
@@ -280,7 +334,9 @@ async function configureNativeAutoApprove(arg?: ChatLevel): Promise<void> {
   if (level === 'undo') {
     if (!backup) return void vscode.window.showInformationMessage('AI Auto-Accept: nothing to undo.');
     results = await Promise.all(Object.entries(backup).map(([k, v]) => writeSetting(k, v ?? undefined)));
+    results.push(editClaudeSettings(false));
     await extContext.globalState.update(BACKUP_KEY, undefined);
+    await extContext.globalState.update('chatLevel', undefined);
   } else {
     const settings = chatSettings(level);
     // Remember the values from before our FIRST change, so Undo returns to the user's original state.
@@ -289,10 +345,13 @@ async function configureNativeAutoApprove(arg?: ChatLevel): Promise<void> {
     await extContext.globalState.update(BACKUP_KEY, saved);
     results = [];
     for (const [k, v] of settings) results.push(await writeSetting(k, v));
+    await extContext.globalState.update('chatLevel', level);
+    writeHookState();
+    results.push(editClaudeSettings(true));
   }
   results.forEach((r) => say(`Chat auto-approve (${level}): ${r}`));
   const failed = results.filter((r) => r.includes('NOT set'));
-  const msg = level === 'undo' ? 'Chat settings restored.' : 'Chat auto-approve is set up. Start a NEW chat session: existing sessions keep their approval mode.';
+  const msg = level === 'undo' ? 'Chat settings restored and Claude Code hook removed.' : level === 'everything' ? 'Everything is auto-approved in all chats. VS Code will ask once to confirm global auto-approve: choose Enable.' : 'Chat auto-approve is set up. Start a NEW VS Code chat session: open ones keep their approval mode.';
   (failed.length ? vscode.window.showWarningMessage : vscode.window.showInformationMessage)(`AI Auto-Accept: ${msg}${failed.length ? ` Not applied: ${failed.join('; ')}` : ''}`);
 }
 
@@ -303,6 +362,16 @@ export function activate(context: vscode.ExtensionContext): void {
   statusBar.command = 'ai-auto-accept.toggle';
   enabled = cfg().get<boolean>('enabled', true);
   updateStatusBar();
+  if (context.globalState.get('chatLevel')) {
+    // Keep the installed hook script in step with this extension version.
+    try {
+      fs.mkdirSync(hookDir(), { recursive: true });
+      fs.copyFileSync(path.join(__dirname, 'claude-hook.js'), path.join(hookDir(), `${HOOK_MARK}.js`));
+    } catch (err) {
+      say(`Could not update the Claude Code hook script: ${(err as Error).message}`);
+    }
+    writeHookState();
+  }
   statusBar.show();
   say(`Activated; auto-accept is ${enabled ? 'ON' : 'OFF'}${cfg().get<boolean>('dryRun', false) ? ' (dry run)' : ''}`);
 
@@ -330,6 +399,7 @@ export function activate(context: vscode.ExtensionContext): void {
       cachedOpts = undefined;
       enabled = cfg().get<boolean>('enabled', true);
       updateStatusBar();
+      writeHookState();
         }),
   );
 }

@@ -63,6 +63,21 @@ exports.run = async function () {
   chatCase('chat-recommended', rules['/.*/'] === true && denyKey && rules[denyKey].approve === false && rules[denyKey].matchCommandLine === true
     && g('chat.tools.terminal.enableAutoApprove') === true && g('chat.agent.maxRequests') === 200 && g('chat.permissions.default') === undefined,
     JSON.stringify({ allowAll: rules['/.*/'], denyKey, maxRequests: g('chat.agent.maxRequests'), permissions: g('chat.permissions.default') }));
+  // Claude Code panel/CLI: a PreToolUse hook is added next to the user's own settings, which must survive.
+  const claudeFile = path.join(process.env.CLAUDE_CONFIG_DIR, 'settings.json');
+  const cs = JSON.parse(fs.readFileSync(claudeFile, 'utf8'));
+  const ours = (cs.hooks.PreToolUse || []).find((e) => e.hooks.some((h) => h.command.includes('ai-auto-accept-claude-hook')));
+  const script = ours && ours.hooks[0].command.match(/"([^"]+ai-auto-accept-claude-hook\.js)"/)[1];
+  const state = script && JSON.parse(fs.readFileSync(path.join(path.dirname(script), 'state.json'), 'utf8'));
+  chatCase('claude-hook-installed', ours && cs.model === 'keep-me' && cs.hooks.PreToolUse.length === 2 && fs.existsSync(script)
+    && state.enabled === true && state.level === 'recommended' && state.deny.length > 10, JSON.stringify({ model: cs.model, hooks: cs.hooks.PreToolUse.length, state: state && { enabled: state.enabled, level: state.level } }));
+  // Turning the extension off must reach the hook (it then approves nothing).
+  await vscode.commands.executeCommand('ai-auto-accept.disable');
+  await sleep(300);
+  const off = JSON.parse(fs.readFileSync(path.join(path.dirname(script), 'state.json'), 'utf8')).enabled;
+  await vscode.commands.executeCommand('ai-auto-accept.enable');
+  await sleep(300);
+  chatCase('claude-hook-follows-toggle', off === false, JSON.stringify({ enabledAfterDisable: off }));
   await vscode.commands.executeCommand('ai-auto-accept.configureNativeAutoApprove', 'everything');
   chatCase('chat-everything', g('chat.permissions.default') === 'autoApprove' && (g('chat.defaultConfiguration') || {}).approvals === 'allowAll',
     JSON.stringify({ permissions: g('chat.permissions.default'), defaultConfiguration: g('chat.defaultConfiguration') }));
@@ -70,6 +85,10 @@ exports.run = async function () {
   chatCase('chat-undo', g('chat.tools.terminal.autoApprove') === undefined && g('chat.permissions.default') === undefined
     && g('chat.defaultConfiguration') === undefined && g('chat.agent.maxRequests') === 30,
     JSON.stringify({ rules: g('chat.tools.terminal.autoApprove'), permissions: g('chat.permissions.default'), maxRequests: g('chat.agent.maxRequests') }));
+
+  const after = JSON.parse(fs.readFileSync(claudeFile, 'utf8'));
+  chatCase('claude-hook-undo', after.model === 'keep-me' && after.hooks.PreToolUse.length === 1 && after.hooks.PreToolUse[0].hooks[0].command === 'user-own-hook',
+    JSON.stringify(after));
 
   const outFile = process.env.E2E_RESULTS || path.resolve(__dirname, 'results.json');
   fs.writeFileSync(outFile, JSON.stringify(results, null, 2));

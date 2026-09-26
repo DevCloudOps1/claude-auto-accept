@@ -190,3 +190,15 @@ test('deny list: ordinary database reads and safe commands are still accepted', 
     'rails db:migrate', 'kubectl get pods', 'docker ps', 'npm test', 'git status', 'terraform plan', 'aws s3 ls',
   ]) assert.deepStrictEqual(detect(cmdBox(cmd)).keys, ['\r'], cmd);
 });
+
+test('claude hook: allows normal tool calls, asks for deny-listed ones, off switch and no level ask', () => {
+  const { decide } = require('../../out/claude-hook.js');
+  const st = { enabled: true, level: 'recommended', deny: DEFAULT_DENY_LIST };
+  assert.strictEqual(decide({ tool_name: 'Bash', tool_input: { command: 'npm test' } }, st), 'allow');
+  assert.strictEqual(decide({ tool_name: 'Edit', tool_input: { file_path: 'src/a.ts', old_string: 'a', new_string: 'b' } }, st), 'allow');
+  assert.strictEqual(decide({ tool_name: 'Bash', tool_input: { command: 'psql -c "DELETE FROM users"' } }, st), 'ask');
+  assert.strictEqual(decide({ tool_name: 'Bash', tool_input: { command: 'rm -rf build' } }, st), 'ask');
+  assert.strictEqual(decide({ tool_name: 'Bash', tool_input: { command: 'psql -c "DROP TABLE x"' } }, { ...st, level: 'everything' }), 'ask');
+  assert.strictEqual(decide({ tool_name: 'Bash', tool_input: { command: 'npm test' } }, { ...st, enabled: false }), 'ask');
+  assert.strictEqual(decide({ tool_name: 'Bash', tool_input: { command: 'npm test' } }, { ...st, level: undefined }), 'ask');
+});

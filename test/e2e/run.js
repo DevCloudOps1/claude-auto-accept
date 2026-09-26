@@ -17,11 +17,15 @@ const { runTests } = require('@vscode/test-electron');
     'claudeAutoAccept.agentCommands': '^(claude|codex|fake-agent\\.js)$',
   }));
   const ws = fs.mkdtempSync(path.join(os.tmpdir(), 'aaa-ws-'));
+  // Never touch the real ~/.claude: Claude Code (and the extension) honour CLAUDE_CONFIG_DIR.
+  const claudeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aaa-claude-'));
+  fs.writeFileSync(path.join(claudeDir, 'settings.json'), JSON.stringify({ model: 'keep-me', hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: 'user-own-hook' }] }] } }));
   try {
     await runTests({
       vscodeExecutablePath: process.env.VSCODE_BIN || '/Applications/Visual Studio Code.app/Contents/MacOS/Code',
       extensionDevelopmentPath: root,
       extensionTestsPath: path.join(__dirname, 'suite.js'),
+      extensionTestsEnv: { CLAUDE_CONFIG_DIR: claudeDir },
       launchArgs: [ws, '--disable-extensions', '--user-data-dir', userData, '--skip-welcome', '--skip-release-notes'],
     });
   } catch (e) {

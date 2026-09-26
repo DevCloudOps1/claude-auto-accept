@@ -36,15 +36,21 @@ Every decision (accepted, blocked, gave up, dry run) is written to the **AI Auto
 
 ## Chat panels
 
-The VS Code chat (GitHub Copilot agent mode) and the Claude Code panel are not terminals, so the extension can't read their prompts. Run **AI Auto-Accept: Set Up Chat Auto-Approve** instead. It sets each panel's own approval settings in your user settings, and you pick a level:
+The VS Code chat (GitHub Copilot agent mode) and the Claude Code panel are not terminals, so the extension can't read their prompts. Run **AI Auto-Accept: Set Up Chat Auto-Approve** instead and pick a level:
 
-| Level | What it sets | Deny-list |
+| Level | VS Code chat / Copilot | Claude Code panel (and `claude` CLI) |
 | --- | --- | --- |
-| **Recommended** | `chat.tools.terminal.enableAutoApprove`, and `chat.tools.terminal.autoApprove` with `"/.*/": true` plus one deny rule per deny-list entry. It also raises `chat.agent.maxRequests` to 200, so chat doesn't stop at "Continue to iterate?". If the Claude Code extension is installed, it sets `claudeCode.initialPermissionMode = "acceptEdits"`. | Yes. VS Code checks deny rules first, and its built-in rules for risky commands still apply. |
-| **Everything** | Everything in Recommended, plus `chat.permissions.default = "autoApprove"` (Bypass Approvals) and `chat.defaultConfiguration.approvals = "allowAll"`. With Claude Code installed, it also sets `bypassPermissions`. VS Code shows its own one-time warning. | **No.** Every tool call runs. |
-| **Undo** | Puts back the values these settings had before you first used the command. | |
+| **Recommended** | Sets `chat.tools.terminal.enableAutoApprove`, and `chat.tools.terminal.autoApprove` with `"/.*/": true` plus one deny rule per deny-list entry. Also raises `chat.agent.maxRequests` to 200. | Adds a `PreToolUse` hook to `~/.claude/settings.json`. It approves every tool call (commands, edits, fetches, MCP tools) **except deny-listed ones, which Claude asks you about as usual**. |
+| **Everything** | Also sets `chat.tools.global.autoApprove` (every chat, including open ones; VS Code asks once to confirm), `chat.permissions.default = "autoApprove"` and `chat.defaultConfiguration.approvals = "allowAll"`. **No deny-list.** Also raises `chat.agent.maxRequests` to 1000. | Same hook: the deny-list **still applies**. |
+| **Undo** | Puts back your previous values. | Removes only this extension's hook entry. Your other Claude settings and hooks are kept. |
 
-**Start a new chat session after changing the level.** Each existing chat keeps the approval mode it started with. If your organisation's policy disables auto-approve, VS Code ignores these settings.
+**How the Claude Code hook works:**
+- It works in the panel and the CLI, and sessions that are already open pick it up.
+- It follows the status-bar on/off switch and the `agents.claude` setting.
+- It runs with VS Code's built-in Node runtime, so Node doesn't need to be installed. On Windows, `node` must be on PATH.
+- It respects `CLAUDE_CONFIG_DIR` if you've set it.
+
+After choosing a level, start a new VS Code chat session, because open chats keep their approval mode (except under "Everything"). If your organisation's policy disables auto-approve, VS Code ignores these settings.
 
 ## Settings
 
@@ -73,7 +79,7 @@ The extension logs and skips any invalid regex in `denyList` or `promptPatterns`
 - **Requires shell integration.** This is on by default for bash, zsh, fish and PowerShell. If a terminal has no shell integration after 10 s, the extension logs a warning and adds it to the status bar tooltip. That terminal is not watched.
 - Commands that were already running before the extension activated (for example, after a window reload) are missed. Restart the agent to fix this.
 - Detection is pattern-based. A new CLI version that rewords its prompts may stop being recognised until the patterns are updated. Use `promptPatterns` in the meantime.
-- Chat panels are covered only through their own approval settings, described in [Chat panels](#chat-panels).
+- Chat panels are covered through their own approval settings and the Claude Code hook, described in [Chat panels](#chat-panels).
 - Requires VS Code 1.93 or later.
 
 ## Development
