@@ -40,17 +40,28 @@ The VS Code chat (GitHub Copilot agent mode) and the Claude Code panel are not t
 
 | Level | VS Code chat / Copilot | Claude Code panel (and `claude` CLI) |
 | --- | --- | --- |
-| **Recommended** | Sets `chat.tools.terminal.enableAutoApprove`, and `chat.tools.terminal.autoApprove` with `"/.*/": true` plus one deny rule per deny-list entry. Also raises `chat.agent.maxRequests` to 200. | Adds a `PreToolUse` hook to `~/.claude/settings.json`. It approves every tool call (commands, edits, fetches, MCP tools) **except deny-listed ones, which Claude asks you about as usual**. |
+| **Recommended** | Sets `chat.tools.terminal.enableAutoApprove`, and `chat.tools.terminal.autoApprove` with `"/.*/": true` plus one deny rule per deny-list entry. Also raises `chat.agent.maxRequests` to 200 and turns on `claudeAutoAccept.claudePanel` (below). | Adds a `PreToolUse` hook to `~/.claude/settings.json`. It approves every tool call (commands, edits, fetches, MCP tools) **except deny-listed ones, which Claude asks you about as usual**. |
 | **Everything** | Also sets `chat.tools.global.autoApprove` (every chat, including open ones; VS Code asks once to confirm), `chat.permissions.default = "autoApprove"` and `chat.defaultConfiguration.approvals = "allowAll"`. **No deny-list.** Also raises `chat.agent.maxRequests` to 1000. | Same hook: the deny-list **still applies**. |
-| **Undo** | Puts back your previous values. | Removes only this extension's hook entry. Your other Claude settings and hooks are kept. |
+| **Undo** | Puts back your previous values, including `claudeAutoAccept.claudePanel`. | Removes only this extension's hook entry. Your other Claude settings and hooks are kept. |
 
-**How the Claude Code hook works:**
-- It works in the panel and the CLI, and sessions that are already open pick it up.
-- It follows the status-bar on/off switch and the `agents.claude` setting.
-- It runs with VS Code's built-in Node runtime, so Node doesn't need to be installed. On Windows, `node` must be on PATH.
-- It respects `CLAUDE_CONFIG_DIR` if you've set it.
+Recommended only turns on the terminal-tool rules and the Claude Code hook; it does **not** turn on `claudeAutoAccept.copilotPanel` (below), since VS Code's own terminal auto-approve already covers most Copilot chat tool calls. Turn that setting on yourself for full tool-level coverage (file edits, MCP tools, ...) in Copilot chat too.
+
+**How the PreToolUse hooks work (Claude Code panel/CLI and VS Code chat/Copilot):**
+- They work in already-open sessions, not just new ones.
+- They follow the status-bar on/off switch, `agents.claude` (Claude) and dry run.
+- They run with VS Code's built-in Node runtime, so Node doesn't need to be installed. On Windows, `node` must be on PATH.
+- The Claude hook respects `CLAUDE_CONFIG_DIR` if you've set it; the Copilot hook respects `COPILOT_HOME`.
 
 After choosing a level, start a new VS Code chat session, because open chats keep their approval mode (except under "Everything"). If your organisation's policy disables auto-approve, VS Code ignores these settings.
+
+### Claude Code panel opt-in (without "Set Up Chat Auto-Approve")
+
+Set `claudeAutoAccept.claudePanel` to `true` directly to install just the `PreToolUse` hook described above, without touching any `chat.*` settings.
+
+### VS Code chat / Copilot panel opt-in
+
+Set `claudeAutoAccept.copilotPanel` to `true` to install a `PreToolUse` hook at `~/.copilot/hooks/ai-auto-accept.json`. It approves every tool call in VS Code chat / GitHub Copilot agent mode (including file edits and MCP tools, not just terminal commands) **except deny-listed ones**, which are left for you to answer.
+
 
 ## Settings
 
@@ -61,7 +72,9 @@ After choosing a level, start a new VS Code chat session, because open chats kee
   "claudeAutoAccept.denyList": ["\\brm\\s+(-\\S+\\s+)*-[a-zA-Z]*(r[a-zA-Z]*f|f[a-zA-Z]*r)", "..."],
   "claudeAutoAccept.promptPatterns": [],   // extra regexes, answered with y + Enter
   "claudeAutoAccept.dryRun": false,
-  "claudeAutoAccept.maxRepeat": 3
+  "claudeAutoAccept.maxRepeat": 3,
+  "claudeAutoAccept.claudePanel": false,   // opt-in; PreToolUse hook, deny-list still applies
+  "claudeAutoAccept.copilotPanel": false   // opt-in; PreToolUse hook, deny-list still applies
 }
 ```
 
