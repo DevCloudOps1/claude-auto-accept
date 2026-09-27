@@ -294,19 +294,30 @@ function hookCommand(target = ''): string {
 
 // Installs each panel's hook while it is opted in (which also refreshes the command after VS Code moves), removes it
 // once it is not, and tells the hooks what to do. Runs on start, on every setting change and on the on/off switch.
+// The entry stays installed across the on/off switch and dry run: only state.json's claude/copilot fields change, so
+// re-enabling reaches every open session at once instead of needing the hook reinstalled.
 function syncHooks(): void {
-  const claude = claudeOptIn();
-  const copilot = copilotOptIn();
+  const wantClaude = claudeOptIn();
+  const wantCopilot = copilotOptIn();
   try {
     fs.mkdirSync(hookDir(), { recursive: true });
     const src = path.join(__dirname, 'claude-hook.js');
     // Keep the installed script in step with this extension version.
-    if ((claude || copilot) && !(fs.existsSync(hookScript()) && fs.readFileSync(hookScript()).equals(fs.readFileSync(src)))) fs.copyFileSync(src, hookScript());
-    fs.writeFileSync(path.join(hookDir(), 'state.json'), JSON.stringify(hookState()));
+    if ((wantClaude || wantCopilot) && !(fs.existsSync(hookScript()) && fs.readFileSync(hookScript()).equals(fs.readFileSync(src)))) fs.copyFileSync(src, hookScript());
   } catch (err) {
     say(`Could not update the hook script: ${(err as Error).message}`);
   }
-  for (const r of [editClaudeSettings(claude), editCopilotHook(copilot)]) if (r) say(r);
+  // Never point a settings.json hook entry at a script that isn't actually on disk: a copy failure above (a read-only
+  // globalStorage, a disk full, ...) must fail closed (prompts keep asking) instead of leaving a broken "no such file"
+  // hook that Claude Code reports as an error on every tool call.
+  const scriptReady = fs.existsSync(hookScript());
+  if ((wantClaude || wantCopilot) && !scriptReady) say(`Hook script missing at ${hookScript()}: leaving the Claude/Copilot hook uninstalled until this is fixed`);
+  try {
+    fs.writeFileSync(path.join(hookDir(), 'state.json'), JSON.stringify(hookState()));
+  } catch (err) {
+    say(`Could not update the hook state: ${(err as Error).message}`);
+  }
+  for (const r of [editClaudeSettings(wantClaude && scriptReady), editCopilotHook(wantCopilot && scriptReady)]) if (r) say(r);
   updateStatusBar();
 }
 
