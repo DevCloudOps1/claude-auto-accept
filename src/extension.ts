@@ -1,4 +1,7 @@
 import * as vscode from 'vscode';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import { stripAnsi, detect, programNames, DEFAULT_DENY_LIST, Detection } from './detector';
 
 const TAIL_CHARS = 4000;
@@ -68,11 +71,9 @@ function updateStatusBar(): void {
   ];
   if (cfg().get<boolean>('dryRun', false)) lines.push('Dry run: prompts are logged, no keys are sent.');
   if (noShellIntegrationWarned) lines.push('Warning: a terminal has no shell integration, so it cannot be watched. See the log.');
-  if (userSetting('chatPanel', false)) {
-    lines.push(enabled && !cfg().get<boolean>('dryRun', false)
-      ? 'Chat panels: the focused chat\'s tool confirmations are clicked automatically (no deny-list there).'
-      : 'Chat panel auto-click is configured but paused (off or dry run).');
-  }
+  const hooks = hookState();
+  if (hooks.copilot) lines.push('VS Code chat / Copilot: every tool call is auto-approved except deny-listed ones.');
+  if (hooks.claude) lines.push('Claude Code panel: every tool call is auto-approved except deny-listed ones.');
   statusBar.tooltip = lines.join('\n');
 }
 
@@ -85,7 +86,7 @@ function setEnabled(next: boolean): void {
   cfg().update('enabled', next, target).then(undefined, (err) => say(`Could not save enabled=${next}: ${(err as Error).message}`));
   say(`Auto-accept ${next ? 'enabled' : 'disabled'}`);
   updateStatusBar();
-  syncChatClick();
+  syncHooks();
 }
 
 // The question plus its command block (from the box border above it; for Codex, which has no box, the few lines
@@ -226,52 +227,12 @@ function checkShellIntegration(terminal: vscode.Terminal): void {
   }, 10000);
 }
 
-// Chat panels (VS Code chat / Copilot, Claude Code panel) are not terminals and don't hand their prompt text to
-// extensions, so unlike the terminal path below there is no deny-list check here: this just focuses the chat and
-// clicks whatever tool confirmation is currently showing, the way Amazon Q's own chat extension does. Combine it
-// with "Set Up Chat Auto-Approve" (which does have a deny-list, via VS Code's own terminal auto-approve rules) if
-// you want dangerous terminal commands to still ask.
+// Chat panels (VS Code chat / Copilot, Claude Code panel) are not terminals, so they are covered through their own
+// approval settings and hooks. Polling 'workbench.action.chat.acceptTool' does not work: it only
+// sees the last-focused chat and moves keyboard focus into the chat input on every call.
 type ChatLevel = 'recommended' | 'everything' | 'undo';
 const BACKUP_KEY = 'chatSettingsBackup';
 let extContext: vscode.ExtensionContext;
-
-const CHAT_CLICK_MS = 400;
-let chatClickTimer: NodeJS.Timeout | undefined;
-let chatClickWarned = false;
-
-async function clickChatTool(): Promise<void> {
-  try {
-    // Accepts the pending tool confirmation in whichever chat view VS Code last focused; a no-op if none is pending.
-    await vscode.commands.executeCommand('workbench.action.chat.acceptTool');
-  } catch (err) {
-    if (!chatClickWarned) {
-      chatClickWarned = true;
-      say(`Chat auto-click stopped: ${(err as Error).message} (needs a newer VS Code)`);
-    }
-    stopChatClick();
-  }
-}
-
-function startChatClick(): void {
-  if (chatClickTimer) return;
-  say('Chat auto-click started: tool confirmations in the focused chat are accepted automatically.');
-  chatClickTimer = setInterval(clickChatTool, CHAT_CLICK_MS);
-}
-
-function stopChatClick(): void {
-  if (!chatClickTimer) return;
-  clearInterval(chatClickTimer);
-  chatClickTimer = undefined;
-  say('Chat auto-click stopped.');
-}
-
-// Runs on start, on every setting change and on the on/off switch, so the poller always matches enabled/dryRun/chatPanel.
-function syncChatClick(): void {
-  const want = enabled && !cfg().get<boolean>('dryRun', false) && userSetting('chatPanel', false);
-  if (want) startChatClick();
-  else stopChatClick();
-  updateStatusBar();
-}
 
 function chatSettings(level: 'recommended' | 'everything'): [string, unknown][] {
   const g = <T>(key: string) => vscode.workspace.getConfiguration().inspect<T>(key)?.globalValue;
@@ -281,7 +242,7 @@ function chatSettings(level: 'recommended' | 'everything'): [string, unknown][] 
   const out: [string, unknown][] = [
     ['chat.tools.terminal.enableAutoApprove', true],
     ['chat.tools.terminal.autoApprove', { ...g<object>('chat.tools.terminal.autoApprove'), '/.*/': true, ...deny }],
-    ['claudeAutoAccept.chatPanel', true],
+    ['claudeAutoAccept.claudePanel', true],
   ];
   // Avoid the "Continue to iterate?" stop after 50 requests.
   if (level === 'recommended') out.push(['chat.agent.maxRequests', Math.max(g<number>('chat.agent.maxRequests') ?? 0, 200)]);
@@ -306,13 +267,117 @@ async function writeSetting(key: string, value: unknown): Promise<string> {
   }
 }
 
+// claudePanel / copilotPanel: a PreToolUse hook approves every tool call except deny-listed ones. Claude Code (panel
+// and CLI) reads it from ~/.claude/settings.json, VS Code chat from ~/.copilot/hooks. The hook script and its
+// state.json live in the extension's global storage, a path that survives extension updates.
+const HOOK_MARK = 'ai-auto-accept-claude-hook';
+const claudeSettingsFile = () => path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), 'settings.json');
+const copilotHookFile = () => path.join(process.env.COPILOT_HOME || path.join(os.homedir(), '.copilot'), 'hooks', 'ai-auto-accept.json');
+const hookDir = () => extContext.globalStorageUri.fsPath;
+const hookScript = () => path.join(hookDir(), `${HOOK_MARK}.js`);
+// 0.1.3's Set Up Chat Auto-Approve recorded its Claude Code hook as 'chatLevel' instead of setting claudePanel.
+const claudeOptIn = () => userSetting('claudePanel', false) || !!extContext.globalState.get('chatLevel');
+const copilotOptIn = () => userSetting('copilotPanel', false);
+
+// Read by the hooks before every tool call, so the on/off switch reaches open sessions at once.
+function hookState() {
+  const agents = cfg().get<Record<string, boolean>>('agents', {});
+  const on = enabled && !cfg().get<boolean>('dryRun', false);
+  return { claude: on && agents.claude !== false && claudeOptIn(), copilot: on && copilotOptIn(), deny: userSetting('denyList', DEFAULT_DENY_LIST) };
+}
+
+function hookCommand(target = ''): string {
+  // Run with VS Code's own Node runtime so users don't need Node installed. ponytail: on Windows this needs `node` on PATH.
+  const command = process.platform === 'win32' ? `node "${hookScript()}"` : `ELECTRON_RUN_AS_NODE=1 "${process.execPath}" "${hookScript()}"`;
+  return target ? `${command} ${target}` : command;
+}
+
+// Installs each panel's hook while it is opted in (which also refreshes the command after VS Code moves), removes it
+// once it is not, and tells the hooks what to do. Runs on start, on every setting change and on the on/off switch.
+// The entry stays installed across the on/off switch and dry run: only state.json's claude/copilot fields change, so
+// re-enabling reaches every open session at once instead of needing the hook reinstalled.
+function syncHooks(): void {
+  const wantClaude = claudeOptIn();
+  const wantCopilot = copilotOptIn();
+  try {
+    fs.mkdirSync(hookDir(), { recursive: true });
+    const src = path.join(__dirname, 'claude-hook.js');
+    // Keep the installed script in step with this extension version.
+    if ((wantClaude || wantCopilot) && !(fs.existsSync(hookScript()) && fs.readFileSync(hookScript()).equals(fs.readFileSync(src)))) fs.copyFileSync(src, hookScript());
+  } catch (err) {
+    say(`Could not update the hook script: ${(err as Error).message}`);
+  }
+  // Never point a settings.json hook entry at a script that isn't actually on disk: a copy failure above (a read-only
+  // globalStorage, a disk full, ...) must fail closed (prompts keep asking) instead of leaving a broken "no such file"
+  // hook that Claude Code reports as an error on every tool call.
+  const scriptReady = fs.existsSync(hookScript());
+  if ((wantClaude || wantCopilot) && !scriptReady) say(`Hook script missing at ${hookScript()}: leaving the Claude/Copilot hook uninstalled until this is fixed`);
+  try {
+    fs.writeFileSync(path.join(hookDir(), 'state.json'), JSON.stringify(hookState()));
+  } catch (err) {
+    say(`Could not update the hook state: ${(err as Error).message}`);
+  }
+  for (const r of [editClaudeSettings(wantClaude && scriptReady), editCopilotHook(wantCopilot && scriptReady)]) if (r) say(r);
+  updateStatusBar();
+}
+
+// Both return undefined when there is nothing to change, and only remove this profile's hook (its command names our
+// storage folder): another VS Code profile or editor may have installed its own.
+function editCopilotHook(install: boolean): string | undefined {
+  const file = copilotHookFile();
+  // Copilot CLI reads the same folder (hence "version": 1) and denies every tool call when a hook exits non-zero, so a
+  // missing script or runtime must still exit 0.
+  const command = hookCommand('copilot') + (process.platform === 'win32' ? '; exit 0' : ' || true');
+  const content = JSON.stringify({ version: 1, hooks: { PreToolUse: [{ type: 'command', command }] } }, null, 2) + '\n';
+  try {
+    const current = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
+    if (install ? current === content : !current.includes(JSON.stringify(hookScript()).slice(1, -1))) return undefined;
+    if (install) {
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, content);
+    } else fs.rmSync(file);
+    return `${file}: VS Code chat / Copilot hook ${install ? 'installed' : 'removed'}`;
+  } catch (err) {
+    return `${file}: NOT changed (${(err as Error).message})`;
+  }
+}
+
+type HookEntry = { matcher?: string; hooks?: { command?: string }[] };
+function editClaudeSettings(install: boolean): string | undefined {
+  const file = claudeSettingsFile();
+  let settings: { hooks?: Record<string, HookEntry[]> } = {};
+  try {
+    if (fs.existsSync(file)) settings = JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch (err) {
+    // Never overwrite a settings file we could not parse.
+    return `${file}: NOT changed (${(err as Error).message})`;
+  }
+  const before = JSON.stringify(settings);
+  const ours = (e: HookEntry) => !!e.hooks?.some((h) => h.command?.includes(hookScript()));
+  const current = settings.hooks?.PreToolUse ?? [];
+  const list = current.filter((e) => !ours(e));
+  if (!install && list.length === current.length) return undefined;
+  if (install) list.push({ matcher: '*', hooks: [{ type: 'command', command: hookCommand() } as { command: string }] });
+  settings.hooks = { ...settings.hooks, PreToolUse: list };
+  if (!list.length) delete settings.hooks.PreToolUse;
+  if (!Object.keys(settings.hooks).length) delete settings.hooks;
+  if (JSON.stringify(settings) === before) return undefined;
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify(settings, null, 2) + '\n');
+    return `${file}: Claude Code hook ${install ? 'installed' : 'removed'}`;
+  } catch (err) {
+    return `${file}: NOT changed (${(err as Error).message})`;
+  }
+}
+
 async function configureNativeAutoApprove(arg?: ChatLevel): Promise<void> {
   let level = arg;
   if (!level) {
     const pick = await vscode.window.showQuickPick(
       [
-        { label: 'Recommended', level: 'recommended' as const, detail: 'VS Code chat runs terminal commands without asking, except anything matching the deny-list (rm -rf, git push --force, ...). Also clicks tool confirmations in chat panels automatically (no deny-list there) and stops the "Continue to iterate?" pause.' },
-        { label: 'Everything (Bypass Approvals)', level: 'everything' as const, detail: 'VS Code chat / Copilot approves every tool call in every chat, including open ones (no deny-list there; VS Code asks you once to confirm).' },
+        { label: 'Recommended', level: 'recommended' as const, detail: 'VS Code chat runs terminal commands and Claude Code approves its tools without asking, except anything matching the deny-list (rm -rf, git push --force, ...). Also stops the "Continue to iterate?" pause.' },
+        { label: 'Everything (Bypass Approvals)', level: 'everything' as const, detail: 'VS Code chat / Copilot approves every tool call in every chat, including open ones (no deny-list there; VS Code asks you once to confirm). Claude Code still asks for deny-listed commands.' },
         { label: 'Undo', level: 'undo' as const, detail: 'Restore the chat settings you had before using this command.' },
       ],
       { title: 'AI Auto-Accept: chat panel auto-approve', placeHolder: 'Choose what chat panels may approve on their own (changes your user settings)' },
@@ -326,6 +391,7 @@ async function configureNativeAutoApprove(arg?: ChatLevel): Promise<void> {
     if (!backup) return void vscode.window.showInformationMessage('AI Auto-Accept: nothing to undo.');
     results = await Promise.all(Object.entries(backup).map(([k, v]) => writeSetting(k, v ?? undefined)));
     await extContext.globalState.update(BACKUP_KEY, undefined);
+    await extContext.globalState.update('chatLevel', undefined);
   } else {
     const settings = chatSettings(level);
     // Remember the values from before our FIRST change, so Undo returns to the user's original state.
@@ -336,9 +402,9 @@ async function configureNativeAutoApprove(arg?: ChatLevel): Promise<void> {
     for (const [k, v] of settings) results.push(await writeSetting(k, v));
   }
   results.forEach((r) => say(`Chat auto-approve (${level}): ${r}`));
-  syncChatClick(); // apply chatPanel before returning
+  syncHooks(); // apply claudePanel (and Undo's cleared 0.1.3 chatLevel) before returning
   const failed = results.filter((r) => r.includes('NOT set'));
-  const msg = level === 'undo' ? 'Chat settings restored and chat auto-click stopped.' : level === 'everything' ? 'Everything is auto-approved in all chats. VS Code will ask once to confirm global auto-approve: choose Enable.' : 'Chat auto-approve is set up. Start a NEW VS Code chat session: open ones keep their approval mode.';
+  const msg = level === 'undo' ? 'Chat settings restored and the Claude Code hook removed.' : level === 'everything' ? 'Everything is auto-approved in all chats. VS Code will ask once to confirm global auto-approve: choose Enable.' : 'Chat auto-approve is set up. Start a NEW VS Code chat session: open ones keep their approval mode.';
   (failed.length ? vscode.window.showWarningMessage : vscode.window.showInformationMessage)(`AI Auto-Accept: ${msg}${failed.length ? ` Not applied: ${failed.join('; ')}` : ''}`);
 }
 
@@ -348,7 +414,7 @@ export function activate(context: vscode.ExtensionContext): void {
   statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
   statusBar.command = 'ai-auto-accept.toggle';
   enabled = cfg().get<boolean>('enabled', true);
-  syncChatClick();
+  syncHooks();
   statusBar.show();
   say(`Activated; auto-accept is ${enabled ? 'ON' : 'OFF'}${cfg().get<boolean>('dryRun', false) ? ' (dry run)' : ''}`);
 
@@ -375,11 +441,9 @@ export function activate(context: vscode.ExtensionContext): void {
       if (!e.affectsConfiguration('claudeAutoAccept')) return;
       cachedOpts = undefined;
       enabled = cfg().get<boolean>('enabled', true);
-      syncChatClick();
+      syncHooks();
     }),
   );
 }
 
-export function deactivate(): void {
-  stopChatClick();
-}
+export function deactivate(): void {}

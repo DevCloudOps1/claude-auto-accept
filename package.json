@@ -2,7 +2,7 @@
   "name": "ai-auto-accept",
   "displayName": "AI Auto-Accept",
   "description": "Auto-answers permission prompts from Claude Code, Codex, Gemini, Amazon Q, Aider and other AI CLIs running in VS Code terminals, with a dangerous-command deny-list.",
-  "version": "0.1.6",
+  "version": "0.1.5",
   "publisher": "DevCloudOps",
   "icon": "images/icon.png",
   "engines": {
@@ -173,10 +173,16 @@
           "minimum": 1,
           "description": "Stop answering a prompt that keeps reappearing unchanged after this many answers, until different output appears."
         },
-        "claudeAutoAccept.chatPanel": {
+        "claudeAutoAccept.claudePanel": {
           "type": "boolean",
           "default": false,
-          "description": "Auto-accept tool confirmations in chat panels (VS Code chat / Copilot agent mode, Claude Code panel) by periodically focusing the chat and clicking its confirmation button, like Amazon Q's own chat extension does. There is no deny-list for this: it clicks whatever is currently shown, so combine it with \"AI Auto-Accept: Set Up Chat Auto-Approve\" if you want dangerous terminal commands to still ask. Usually turned on through that command instead of directly. Read from user settings only; follows the on/off switch and dry run.",
+          "description": "Auto-approve every tool call (commands, edits, fetches, MCP tools) in the Claude Code panel and CLI, except deny-listed ones, via a PreToolUse hook in ~/.claude/settings.json. Usually turned on through \"AI Auto-Accept: Set Up Chat Auto-Approve\" instead of directly. Read from user settings only; follows the on/off switch, agents.claude and dry run.",
+          "scope": "machine"
+        },
+        "claudeAutoAccept.copilotPanel": {
+          "type": "boolean",
+          "default": false,
+          "description": "Auto-approve every tool call in VS Code chat / GitHub Copilot agent mode, except deny-listed ones, via a PreToolUse hook in ~/.copilot/hooks. Read from user settings only; follows the on/off switch and dry run.",
           "scope": "machine"
         }
       }
