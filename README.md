@@ -11,6 +11,8 @@ Stop clicking "Yes". AI Auto-Accept answers the permission questions AI coding a
    To set up only the Claude Code part, add `"claudeAutoAccept.claudePanel": true` to your **User** settings instead.
 3. Use Claude as usual. When Claude is about to ask for permission, the question is answered Yes for you, so the command or edit just runs.
 
+This works in every Claude chat at the same time: the side bar, chats opened in editor tabs, tabs in the background, and chats that were already open when you turned it on. Each chat runs its own Claude process, and every one of them uses the same hook.
+
 Claude asks most in **Manual** mode (before almost every edit and command), so that is where you see the most answered for you. In **Auto** mode, Claude's own safety check decides and rarely asks.
 
 The answer comes from a hook saved in `~/.claude/settings.json`, so it also answers the `claude` CLI in any terminal, even while VS Code is closed. It keeps the on/off state you last set in VS Code.
@@ -35,6 +37,9 @@ Nothing to set up. Run `claude`, `codex`, `gemini`, `q` or `aider` in a VS Code 
 | What you see | What to do |
 | --- | --- |
 | Claude keeps asking and the counter stays at 0 | Check that `claudeAutoAccept.claudePanel` is `true` in your **User** settings (workspace settings are ignored for safety) and that the status bar shows ✓. The log says `Claude Code hook installed` when the hook is in place. |
+| Claude doesn't ask, but the counter stays at 0 | The counter counts only questions Claude was about to ask. In **Auto** mode, or for commands you allowed before, Claude doesn't ask, so there is nothing to count. Otherwise the window is still running a version older than 0.1.8, which answers without counting: after updating, run **Developer: Reload Window**. |
+| Only one chat seems to be answered | Every Claude Code chat is covered, in the side bar and in editor tabs. The **Chat** view is GitHub Copilot, not Claude: it follows VS Code's chat settings (see [Chat panels](#chat-panels)). A question that was already on screen before you turned auto-accept on is not answered: answer it yourself, and the next ones are answered for you. |
+| A notification says "Claude is requesting permission to use Bash", but nothing is waiting | Claude Code shows it as soon as a chat you aren't looking at (for example a background tab) starts to ask. The hook answers a moment later, so you can ignore it. |
 | Claude still asks about one command | It matched the deny-list (the log says `BLOCKED`). This is on purpose: answer it yourself. |
 | Claude asks a multiple-choice question or wants a plan approved | These are Claude's questions to you, not permission prompts, and are always left to you. |
 | A terminal agent's prompt is not answered | The terminal needs shell integration, and the command must match `claudeAutoAccept.agentCommands`. Agents started before the extension finished loading are not watched: restart the agent. |
