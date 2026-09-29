@@ -1,15 +1,19 @@
-// PreToolUse hook for Claude Code (CLI and VS Code panel) and VS Code chat / Copilot. They run it before every tool
-// call; printing an "allow" decision skips the permission prompt. Printing nothing leaves the normal flow: the user is
-// asked as usual. Standalone on purpose: the extension copies this file next to state.json in its global storage folder.
+// Permission hook. Claude Code (CLI and VS Code panel) runs it as a PermissionRequest hook, only when it is about to ask
+// the user; VS Code chat / Copilot runs it as a PreToolUse hook before every tool call. Printing an "allow" decision
+// answers Yes; printing nothing leaves the question to the user. Standalone on purpose: the extension copies this file
+// next to state.json in its global storage folder.
 import * as fs from 'fs';
 import * as path from 'path';
 
 type Target = 'claude' | 'copilot';
 type State = { claude?: boolean; copilot?: boolean; deny: string[] };
+type HookInput = { hook_event_name?: string; tool_name?: string; tool_input?: unknown };
+// Claude's own questions to the user (multiple choice, plan approval) need the user's answer, not a Yes.
+const USER_QUESTIONS = new Set(['AskUserQuestion', 'ExitPlanMode']);
 
-export function decide(input: { tool_name?: string; tool_input?: unknown }, state: State, target: Target = 'claude'): 'allow' | 'ask' {
+export function decide(input: HookInput, state: State, target: Target = 'claude'): 'allow' | 'ask' {
   // The deny-list always applies: destructive commands (DROP TABLE, rm -rf, ...) go to the user.
-  if (!state[target]) return 'ask';
+  if (!state[target] || USER_QUESTIONS.has(input.tool_name ?? '')) return 'ask';
   const text = JSON.stringify(input.tool_input ?? {});
   const unescaped = text.replace(/\\"/g, '"').replace(/\\\\/g, '\\'); // match commands as typed, not JSON-escaped
   for (const src of state.deny) {
@@ -29,8 +33,19 @@ if (require.main === module) {
   process.stdin.on('data', (c) => (raw += c)).on('end', () => {
     try {
       const state: State = JSON.parse(fs.readFileSync(path.join(__dirname, 'state.json'), 'utf8'));
-      if (decide(JSON.parse(raw), state, target) === 'allow') {
-        process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow', permissionDecisionReason: 'AI Auto-Accept' } }));
+      const input: HookInput = JSON.parse(raw);
+      const decision = decide(input, state, target);
+      const question = input.hook_event_name === 'PermissionRequest';
+      if (decision === 'allow') {
+        process.stdout.write(JSON.stringify(question
+          ? { hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: { behavior: 'allow' } } }
+          : { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow', permissionDecisionReason: 'AI Auto-Accept' } }));
+      }
+      // One line per permission question answered or left to the user, for the extension's status bar counter and log.
+      if (question && state[target] && !USER_QUESTIONS.has(input.tool_name ?? '')) {
+        const t = (input.tool_input ?? {}) as { command?: unknown; file_path?: unknown };
+        const what = `${input.tool_name ?? 'tool'}: ${String(t.command ?? t.file_path ?? JSON.stringify(t))}`.replace(/\s+/g, ' ').slice(0, 160);
+        fs.appendFileSync(path.join(__dirname, 'decisions.jsonl'), JSON.stringify({ target, decision, what }) + '\n');
       }
     } catch {
       // No state (extension uninstalled or never set up) or bad input: stay out of the way, the user is asked as usual.

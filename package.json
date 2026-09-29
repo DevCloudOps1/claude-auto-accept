@@ -2,7 +2,7 @@
   "name": "ai-auto-accept",
   "displayName": "AI Auto-Accept",
   "description": "Auto-answers permission prompts from Claude Code, Codex, Gemini, Amazon Q, Aider and other AI CLIs running in VS Code terminals, with a dangerous-command deny-list.",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "publisher": "DevCloudOps",
   "icon": "images/icon.png",
   "engines": {
@@ -176,7 +176,7 @@
         "claudeAutoAccept.claudePanel": {
           "type": "boolean",
           "default": false,
-          "description": "Auto-approve every tool call (commands, edits, fetches, MCP tools) in the Claude Code panel and CLI, except deny-listed ones, via a PreToolUse hook in ~/.claude/settings.json. Usually turned on through \"AI Auto-Accept: Set Up Chat Auto-Approve\" instead of directly. Read from user settings only; follows the on/off switch, agents.claude and dry run.",
+          "description": "Answer Yes whenever Claude Code (panel and CLI) is about to ask for permission (commands, edits, fetches, MCP tools), except for deny-listed ones, via a PermissionRequest hook in ~/.claude/settings.json. Claude's own questions to you (multiple choice, plan approval) are left to you. Usually turned on through \"AI Auto-Accept: Set Up Chat Auto-Approve\" instead of directly. Read from user settings only; follows the on/off switch, agents.claude and dry run.",
           "scope": "machine"
         },
         "claudeAutoAccept.copilotPanel": {

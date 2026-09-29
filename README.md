@@ -1,10 +1,51 @@
 # AI Auto-Accept
 
-A VS Code extension that watches your integrated terminals for permission prompts from AI coding CLIs (Claude Code, Codex, Gemini, Amazon Q, Aider, and plain `[Y/n]` prompts) and answers them for you, unless the command matches a dangerous-command deny-list.
+Stop clicking "Yes". AI Auto-Accept answers the permission questions AI coding agents ask ("Allow this bash command?", "Do you want to make this edit?") for you: in the **Claude Code chat panel**, and in AI CLIs running in VS Code terminals (Claude Code, Codex, Gemini, Amazon Q, Aider). Dangerous commands (`rm -rf`, `git push --force`, `DROP TABLE`, `terraform destroy`, ...) are never answered: those questions are always left to you.
 
-It only acts on prompts it recognises. Ordinary output that happens to contain a question ("Do you want to know more?") is ignored.
+## Quick start
 
-## Supported agents
+### Claude Code chat panel
+
+1. Install **AI Auto-Accept** and the **Claude Code** extension.
+2. Open the Command Palette (`Cmd+Shift+P` on macOS, `Ctrl+Shift+P` on Windows/Linux), run **AI Auto-Accept: Set Up Chat Auto-Approve** and pick **Recommended**.
+   To set up only the Claude Code part, add `"claudeAutoAccept.claudePanel": true` to your **User** settings instead.
+3. Use Claude as usual. When Claude is about to ask for permission, the question is answered Yes for you, so the command or edit just runs.
+
+Claude asks most in **Manual** mode (before almost every edit and command), so that is where you see the most answered for you. In **Auto** mode, Claude's own safety check decides and rarely asks.
+
+The answer comes from a hook saved in `~/.claude/settings.json`, so it also answers the `claude` CLI in any terminal, even while VS Code is closed. It keeps the on/off state you last set in VS Code.
+
+### AI CLIs in a terminal
+
+Nothing to set up. Run `claude`, `codex`, `gemini`, `q` or `aider` in a VS Code terminal, and their permission prompts are answered for you. The terminal needs shell integration, which is on by default for bash, zsh, fish and PowerShell.
+
+### How to tell it's working
+
+- The status bar (bottom right) shows **`✓ Auto-Accept 3`**. The number is how many questions were answered for you since the window opened.
+- Run **AI Auto-Accept: Show Log** to see each one, for example `ACCEPT [Claude Code] "Bash: npm test"`.
+- A dangerous command still asks you, and the log says why: `BLOCKED [Claude Code] "Bash: rm -rf build" (deny-list: answer it yourself)`.
+
+### Turn it off
+
+- Click **Auto-Accept** in the status bar, or run **AI Auto-Accept: Toggle**. While it is off, nothing is answered for you, in the Claude chat or in terminals.
+- To remove the Claude Code hook completely, run **AI Auto-Accept: Set Up Chat Auto-Approve** and pick **Undo**, or set `claudeAutoAccept.claudePanel` to `false`.
+
+### Troubleshooting
+
+| What you see | What to do |
+| --- | --- |
+| Claude keeps asking and the counter stays at 0 | Check that `claudeAutoAccept.claudePanel` is `true` in your **User** settings (workspace settings are ignored for safety) and that the status bar shows ✓. The log says `Claude Code hook installed` when the hook is in place. |
+| Claude still asks about one command | It matched the deny-list (the log says `BLOCKED`). This is on purpose: answer it yourself. |
+| Claude asks a multiple-choice question or wants a plan approved | These are Claude's questions to you, not permission prompts, and are always left to you. |
+| A terminal agent's prompt is not answered | The terminal needs shell integration, and the command must match `claudeAutoAccept.agentCommands`. Agents started before the extension finished loading are not watched: restart the agent. |
+
+### Upgrading from 0.1.6
+
+0.1.6 swapped the Claude Code chat support for a "chat auto-click" setting that could not reach the Claude Code panel. From 0.1.8 the hook is back. If you turned on chat auto-click in 0.1.6, run **AI Auto-Accept: Set Up Chat Auto-Approve → Recommended** again, or set `claudeAutoAccept.claudePanel` to `true`. You can delete the leftover `claudeAutoAccept.chatPanel` setting.
+
+## Supported agents (terminal)
+
+The extension only acts on prompts it recognises. Ordinary output that happens to contain a question ("Do you want to know more?") is ignored.
 
 | Agent (setting key) | Prompts recognised | Keys sent |
 | --- | --- | --- |
@@ -29,7 +70,7 @@ Every decision (accepted, blocked, gave up, dry run) is written to the **AI Auto
 ## Safety
 
 - **User settings only.** `denyList`, `agentCommands` and `promptPatterns` are read from your user settings only. A repository's `.vscode/settings.json` cannot switch off the deny-list or widen what gets answered.
-- **Deny-list (on by default).** A prompt whose text matches any `claudeAutoAccept.denyList` regex is never answered. The patterns are also checked against the command box with its wrapped lines rejoined, so a long command the agent wraps (`git push origin my-branch` on one line, `--force` on the next) is still caught. The log records which pattern matched, and you answer the prompt yourself. The default list covers recursive `rm` (`-r`, `-R`, `-rf`, `--recursive`, flags in any order), `git push --force`/`+refspec`, `find -delete`, `curl … | sh/python/node`, `git push --force`, `git reset --hard`, `git clean -f`, `dd of=`, destructive database commands (`DROP`, `TRUNCATE`, `DELETE FROM`, `UPDATE … SET` without `WHERE`, `ALTER TABLE … DROP`, `dropdb`, Mongo `drop()`/`deleteMany({})`, Redis `FLUSHALL`, `prisma migrate reset`, `rails db:drop`, `artisan migrate:fresh`, `manage.py flush`, `supabase db reset`), infrastructure teardown (`terraform destroy`, `kubectl delete`, `helm uninstall`, `aws s3 rm --recursive`, `aws … delete-*`, `docker volume prune`), `mkfs`, `chmod 777`, `writes to raw disks, and fork bombs. The deny-list is a safety net, not a sandbox: a command written in a way the patterns don't cover will still be accepted.
+- **Deny-list (on by default).** A prompt whose text matches any `claudeAutoAccept.denyList` regex is never answered. The patterns are also checked against the command box with its wrapped lines rejoined, so a long command the agent wraps (`git push origin my-branch` on one line, `--force` on the next) is still caught. The log records which pattern matched, and you answer the prompt yourself. The default list covers recursive `rm` (`-r`, `-R`, `-rf`, `--recursive`, flags in any order), `git push --force`/`+refspec`, `find -delete`, `curl … | sh/python/node`, `git reset --hard`, `git clean -f`, `dd of=`, destructive database commands (`DROP`, `TRUNCATE`, `DELETE FROM`, `UPDATE … SET` without `WHERE`, `ALTER TABLE … DROP`, `dropdb`, Mongo `drop()`/`deleteMany({})`, Redis `FLUSHALL`, `prisma migrate reset`, `rails db:drop`, `artisan migrate:fresh`, `manage.py flush`, `supabase db reset`), infrastructure teardown (`terraform destroy`, `kubectl delete`, `helm uninstall`, `aws s3 rm --recursive`, `aws … delete-*`, `docker volume prune`), `mkfs`, `chmod 777`, writes to raw disks, and fork bombs. The deny-list is a safety net, not a sandbox: a command written in a way the patterns don't cover will still be accepted.
 - **Dry run.** Set `claudeAutoAccept.dryRun` to log what would be sent without sending anything.
 - **Per-agent switches.** You can turn off any agent under `claudeAutoAccept.agents`.
 - **Toggle.** Click the status bar item, or use **AI Auto-Accept: Toggle**.
@@ -40,15 +81,16 @@ The VS Code chat (GitHub Copilot agent mode) and the Claude Code panel are not t
 
 | Level | VS Code chat / Copilot | Claude Code panel (and `claude` CLI) |
 | --- | --- | --- |
-| **Recommended** | Sets `chat.tools.terminal.enableAutoApprove`, and `chat.tools.terminal.autoApprove` with `"/.*/": true` plus one deny rule per deny-list entry. Also raises `chat.agent.maxRequests` to 200 and turns on `claudeAutoAccept.claudePanel` (below). | Adds a `PreToolUse` hook to `~/.claude/settings.json`. It approves every tool call (commands, edits, fetches, MCP tools) **except deny-listed ones, which Claude asks you about as usual**. |
+| **Recommended** | Sets `chat.tools.terminal.enableAutoApprove`, and `chat.tools.terminal.autoApprove` with `"/.*/": true` plus one deny rule per deny-list entry. Also raises `chat.agent.maxRequests` to 200 and turns on `claudeAutoAccept.claudePanel` (below). | Adds a `PermissionRequest` hook to `~/.claude/settings.json`. Whenever Claude is about to ask for permission (commands, edits, fetches, MCP tools), the hook answers Yes, **except for deny-listed ones, which Claude asks you about as usual**. Claude's own questions to you (multiple choice, plan approval) are always left to you. |
 | **Everything** | Also sets `chat.tools.global.autoApprove` (every chat, including open ones; VS Code asks once to confirm), `chat.permissions.default = "autoApprove"` and `chat.defaultConfiguration.approvals = "allowAll"`. **No deny-list.** Also raises `chat.agent.maxRequests` to 1000. | Same hook: the deny-list **still applies**. |
 | **Undo** | Puts back your previous values, including `claudeAutoAccept.claudePanel`. | Removes only this extension's hook entry. Your other Claude settings and hooks are kept. |
 
 Recommended only turns on the terminal-tool rules and the Claude Code hook; it does **not** turn on `claudeAutoAccept.copilotPanel` (below), since VS Code's own terminal auto-approve already covers most Copilot chat tool calls. Turn that setting on yourself for full tool-level coverage (file edits, MCP tools, ...) in Copilot chat too.
 
-**How the PreToolUse hooks work (Claude Code panel/CLI and VS Code chat/Copilot):**
+**How the hooks work (Claude Code panel/CLI: `PermissionRequest`; VS Code chat/Copilot: `PreToolUse`):**
 - They work in already-open sessions, not just new ones.
 - They follow the status-bar on/off switch, `agents.claude` (Claude) and dry run.
+- Each Claude Code question answered Yes adds one to the status bar counter and is logged as `ACCEPT [Claude Code] …` in the **AI Auto-Accept** output channel. Deny-listed ones are logged as `BLOCKED` and left to you.
 - They run with VS Code's built-in Node runtime, so Node doesn't need to be installed. On Windows, `node` must be on PATH.
 - The Claude hook respects `CLAUDE_CONFIG_DIR` if you've set it; the Copilot hook respects `COPILOT_HOME`.
 
@@ -56,7 +98,7 @@ After choosing a level, start a new VS Code chat session, because open chats kee
 
 ### Claude Code panel opt-in (without "Set Up Chat Auto-Approve")
 
-Set `claudeAutoAccept.claudePanel` to `true` directly to install just the `PreToolUse` hook described above, without touching any `chat.*` settings.
+Set `claudeAutoAccept.claudePanel` to `true` directly to install just the `PermissionRequest` hook described above, without touching any `chat.*` settings.
 
 ### VS Code chat / Copilot panel opt-in
 
@@ -69,11 +111,12 @@ Set `claudeAutoAccept.copilotPanel` to `true` to install a `PreToolUse` hook at 
 {
   "claudeAutoAccept.enabled": true,
   "claudeAutoAccept.agents": { "claude": true, "codex": true, "gemini": true, "amazonq": true, "aider": true, "generic": true },
-  "claudeAutoAccept.denyList": ["\\brm\\s+(-\\S+\\s+)*-[a-zA-Z]*(r[a-zA-Z]*f|f[a-zA-Z]*r)", "..."],
+  "claudeAutoAccept.denyList": [ /* built-in list, see Safety */ ],
+  "claudeAutoAccept.agentCommands": "^(claude(-code)?|codex|gemini(-cli)?|q|qchat|aider|copilot|opencode)$",
   "claudeAutoAccept.promptPatterns": [],   // extra regexes, answered with y + Enter
   "claudeAutoAccept.dryRun": false,
   "claudeAutoAccept.maxRepeat": 3,
-  "claudeAutoAccept.claudePanel": false,   // opt-in; PreToolUse hook, deny-list still applies
+  "claudeAutoAccept.claudePanel": false,   // opt-in; PermissionRequest hook, deny-list still applies
   "claudeAutoAccept.copilotPanel": false   // opt-in; PreToolUse hook, deny-list still applies
 }
 ```
@@ -99,6 +142,6 @@ The extension logs and skips any invalid regex in `denyList` or `promptPatterns`
 
 ```bash
 npm install
-npm run compile
+npm run test:unit  # compiles, then runs the detector and hook unit tests
 npm run test:e2e   # launches real VS Code against test/fake-agent.js scenarios
 ```

@@ -58,7 +58,7 @@ exports.run = async function () {
   const chatCase = (name, pass, detail) => results.push({ scenario: name, script: 'chat', expect: 'settings', keys: detail, pass: !!pass });
   const claudeFile = path.join(process.env.CLAUDE_CONFIG_DIR, 'settings.json');
   const copilotFile = path.join(process.env.COPILOT_HOME, 'hooks', 'ai-auto-accept.json');
-  const claudeHookOf = (cs) => (cs.hooks?.PreToolUse || []).find((e) => e.hooks.some((h) => h.command.includes('ai-auto-accept-claude-hook')));
+  const claudeHookOf = (cs) => (cs.hooks?.PermissionRequest || []).find((e) => e.hooks.some((h) => h.command.includes('ai-auto-accept-claude-hook')));
   const hookState = () => {
     const ours = claudeHookOf(JSON.parse(fs.readFileSync(claudeFile, 'utf8')));
     const script = ours && ours.hooks[0].command.match(/"([^"]+ai-auto-accept-claude-hook\.js)"/)[1];
@@ -72,14 +72,17 @@ exports.run = async function () {
   chatCase('chat-recommended', rules['/.*/'] === true && denyKey && rules[denyKey].approve === false && rules[denyKey].matchCommandLine === true
     && g('chat.tools.terminal.enableAutoApprove') === true && g('chat.agent.maxRequests') === 200 && g('chat.permissions.default') === undefined,
     JSON.stringify({ allowAll: rules['/.*/'], denyKey, maxRequests: g('chat.agent.maxRequests'), permissions: g('chat.permissions.default') }));
-  // Claude Code panel/CLI: a PreToolUse hook is added next to the user's own settings, which must survive.
+  // Claude Code panel/CLI: a PermissionRequest hook is added next to the user's own settings, which must survive.
   const cs = JSON.parse(fs.readFileSync(claudeFile, 'utf8'));
   const ours = claudeHookOf(cs);
   const script = ours && ours.hooks[0].command.match(/"([^"]+ai-auto-accept-claude-hook\.js)"/)[1];
   const state = hookState();
-  chatCase('claude-hook-installed', ours && cs.model === 'keep-me' && cs.hooks.PreToolUse.length === 2 && fs.existsSync(script)
-    && state.claude === true && state.copilot === false && state.deny.length > 10,
-    JSON.stringify({ model: cs.model, hooks: cs.hooks.PreToolUse.length, state: state && { claude: state.claude, copilot: state.copilot } }));
+  chatCase('claude-hook-installed', ours && cs.model === 'keep-me' && cs.hooks.PreToolUse.length === 1 && cs.hooks.PermissionRequest.length === 1
+    && fs.existsSync(script) && state.claude === true && state.copilot === false && state.deny.length > 10,
+    JSON.stringify({ model: cs.model, hooks: Object.keys(cs.hooks), state: state && { claude: state.claude, copilot: state.copilot } }));
+  // 0.1.5 and earlier installed a PreToolUse hook: the next sync (here the off switch) moves it to PermissionRequest.
+  cs.hooks.PreToolUse.push({ matcher: '*', hooks: [{ type: 'command', command: ours.hooks[0].command }] });
+  fs.writeFileSync(claudeFile, JSON.stringify(cs));
   // Turning the extension off must reach the hook (it then approves nothing).
   await vscode.commands.executeCommand('ai-auto-accept.disable');
   await sleep(300);
@@ -87,6 +90,9 @@ exports.run = async function () {
   await vscode.commands.executeCommand('ai-auto-accept.enable');
   await sleep(300);
   chatCase('claude-hook-follows-toggle', off === false, JSON.stringify({ claudeAfterDisable: off }));
+  const migrated = JSON.parse(fs.readFileSync(claudeFile, 'utf8')).hooks;
+  chatCase('claude-hook-migrated', migrated.PreToolUse.length === 1 && migrated.PreToolUse[0].hooks[0].command === 'user-own-hook'
+    && migrated.PermissionRequest.length === 1, JSON.stringify(migrated));
   await vscode.commands.executeCommand('ai-auto-accept.configureNativeAutoApprove', 'everything');
   chatCase('chat-everything', g('chat.permissions.default') === 'autoApprove' && (g('chat.defaultConfiguration') || {}).approvals === 'allowAll',
     JSON.stringify({ permissions: g('chat.permissions.default'), defaultConfiguration: g('chat.defaultConfiguration') }));
@@ -96,8 +102,8 @@ exports.run = async function () {
     JSON.stringify({ rules: g('chat.tools.terminal.autoApprove'), permissions: g('chat.permissions.default'), maxRequests: g('chat.agent.maxRequests') }));
 
   const after = JSON.parse(fs.readFileSync(claudeFile, 'utf8'));
-  chatCase('claude-hook-undo', after.model === 'keep-me' && after.hooks.PreToolUse.length === 1 && after.hooks.PreToolUse[0].hooks[0].command === 'user-own-hook',
-    JSON.stringify(after));
+  chatCase('claude-hook-undo', after.model === 'keep-me' && after.hooks.PreToolUse.length === 1 && after.hooks.PreToolUse[0].hooks[0].command === 'user-own-hook'
+    && !after.hooks.PermissionRequest, JSON.stringify(after));
 
   // Claude panel opt-in setting directly (not through configureNativeAutoApprove): installs/removes the same hook.
   await conf().update('claudeAutoAccept.claudePanel', true, vscode.ConfigurationTarget.Global);

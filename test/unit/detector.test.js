@@ -205,4 +205,29 @@ test('claude hook: allows normal tool calls, asks for deny-listed ones, off swit
   assert.strictEqual(decide({ tool_name: 'bash', tool_input: { command: 'npm test' } }, st, 'copilot'), 'allow');
   assert.strictEqual(decide({ tool_name: 'bash', tool_input: { command: 'npm test' } }, { ...st, copilot: false }, 'copilot'), 'ask');
   assert.strictEqual(decide({ tool_name: 'Bash', tool_input: { command: 'npm test' } }, { deny: DEFAULT_DENY_LIST }), 'ask');
+  // Claude's own questions to the user always go to the user.
+  assert.strictEqual(decide({ tool_name: 'AskUserQuestion', tool_input: { questions: [] } }, st), 'ask');
+  assert.strictEqual(decide({ tool_name: 'ExitPlanMode', tool_input: { plan: 'x' } }, st), 'ask');
+});
+
+test('claude hook: answers PermissionRequest and PreToolUse, records only answered permission questions', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const dir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'aaa-hook-'));
+  fs.copyFileSync(path.join(__dirname, '../../out/claude-hook.js'), path.join(dir, 'hook.js'));
+  const run = (state, event, command, tool = 'Bash', target = []) => {
+    fs.writeFileSync(path.join(dir, 'state.json'), JSON.stringify({ deny: DEFAULT_DENY_LIST, ...state }));
+    const input = JSON.stringify({ hook_event_name: event, tool_name: tool, tool_input: { command } });
+    return require('child_process').execFileSync(process.execPath, [path.join(dir, 'hook.js'), ...target], { input }).toString();
+  };
+  assert.match(run({ claude: true }, 'PermissionRequest', 'npm test'), /"decision":\{"behavior":"allow"\}/);
+  assert.strictEqual(run({ claude: true }, 'PermissionRequest', 'rm -rf build'), '');
+  assert.strictEqual(run({ claude: true }, 'PermissionRequest', '', 'AskUserQuestion'), '');
+  assert.strictEqual(run({ claude: false }, 'PermissionRequest', 'npm test'), '');
+  assert.match(run({ copilot: true }, 'PreToolUse', 'npm test', 'bash', ['copilot']), /"permissionDecision":"allow"/);
+  const lines = fs.readFileSync(path.join(dir, 'decisions.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  assert.deepStrictEqual(lines, [
+    { target: 'claude', decision: 'allow', what: 'Bash: npm test' },
+    { target: 'claude', decision: 'ask', what: 'Bash: rm -rf build' },
+  ]);
 });

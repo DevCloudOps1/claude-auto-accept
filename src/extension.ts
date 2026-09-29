@@ -73,7 +73,7 @@ function updateStatusBar(): void {
   if (noShellIntegrationWarned) lines.push('Warning: a terminal has no shell integration, so it cannot be watched. See the log.');
   const hooks = hookState();
   if (hooks.copilot) lines.push('VS Code chat / Copilot: every tool call is auto-approved except deny-listed ones.');
-  if (hooks.claude) lines.push('Claude Code panel: every tool call is auto-approved except deny-listed ones.');
+  if (hooks.claude) lines.push('Claude Code: permission questions are answered Yes, except deny-listed ones.');
   statusBar.tooltip = lines.join('\n');
 }
 
@@ -267,8 +267,9 @@ async function writeSetting(key: string, value: unknown): Promise<string> {
   }
 }
 
-// claudePanel / copilotPanel: a PreToolUse hook approves every tool call except deny-listed ones. Claude Code (panel
-// and CLI) reads it from ~/.claude/settings.json, VS Code chat from ~/.copilot/hooks. The hook script and its
+// claudePanel / copilotPanel: a hook answers permission questions with Yes except for deny-listed tool calls. Claude
+// Code (panel and CLI) runs it as a PermissionRequest hook from ~/.claude/settings.json, VS Code chat as a PreToolUse
+// hook from ~/.copilot/hooks. The hook script and its
 // state.json live in the extension's global storage, a path that survives extension updates.
 const HOOK_MARK = 'ai-auto-accept-claude-hook';
 const claudeSettingsFile = () => path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), 'settings.json');
@@ -278,6 +279,43 @@ const hookScript = () => path.join(hookDir(), `${HOOK_MARK}.js`);
 // 0.1.3's Set Up Chat Auto-Approve recorded its Claude Code hook as 'chatLevel' instead of setting claudePanel.
 const claudeOptIn = () => userSetting('claudePanel', false) || !!extContext.globalState.get('chatLevel');
 const copilotOptIn = () => userSetting('copilotPanel', false);
+
+// The hooks append one line per decision. Every window of this profile shares the file, so each counts all of them.
+const decisionsFile = () => path.join(hookDir(), 'decisions.jsonl');
+let decisionsRead = 0;
+function readDecisions(): void {
+  let buf: Buffer;
+  try {
+    const size = fs.existsSync(decisionsFile()) ? fs.statSync(decisionsFile()).size : 0;
+    if (size < decisionsRead) decisionsRead = 0; // truncated
+    if (size === decisionsRead) return;
+    buf = Buffer.alloc(size - decisionsRead);
+    const fd = fs.openSync(decisionsFile(), 'r');
+    try {
+      fs.readSync(fd, buf, 0, buf.length, decisionsRead);
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch (err) {
+    return void say(`Could not read chat decisions: ${(err as Error).message}`);
+  }
+  const end = buf.lastIndexOf(10) + 1; // a line still being written is read next time
+  decisionsRead += end;
+  for (const line of buf.subarray(0, end).toString('utf8').split('\n').filter(Boolean)) {
+    let d: { target?: string; decision?: string; what?: string };
+    try {
+      d = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    const where = d.target === 'copilot' ? 'VS Code chat' : 'Claude Code';
+    if (d.decision === 'allow') {
+      accepted++;
+      say(`ACCEPT [${where}] ${summary(d.what ?? '')}`);
+    } else say(`BLOCKED [${where}] ${summary(d.what ?? '')} (deny-list: answer it yourself)`);
+  }
+  updateStatusBar();
+}
 
 // Read by the hooks before every tool call, so the on/off switch reaches open sessions at once.
 function hookState() {
@@ -342,7 +380,7 @@ function editCopilotHook(install: boolean): string | undefined {
   }
 }
 
-type HookEntry = { matcher?: string; hooks?: { command?: string }[] };
+type HookEntry = { matcher?: string; hooks?: { type?: string; command?: string }[] };
 function editClaudeSettings(install: boolean): string | undefined {
   const file = claudeSettingsFile();
   let settings: { hooks?: Record<string, HookEntry[]> } = {};
@@ -354,12 +392,17 @@ function editClaudeSettings(install: boolean): string | undefined {
   }
   const before = JSON.stringify(settings);
   const ours = (e: HookEntry) => !!e.hooks?.some((h) => h.command?.includes(hookScript()));
-  const current = settings.hooks?.PreToolUse ?? [];
-  const list = current.filter((e) => !ours(e));
-  if (!install && list.length === current.length) return undefined;
-  if (install) list.push({ matcher: '*', hooks: [{ type: 'command', command: hookCommand() } as { command: string }] });
-  settings.hooks = { ...settings.hooks, PreToolUse: list };
-  if (!list.length) delete settings.hooks.PreToolUse;
+  const entry: HookEntry = { matcher: '*', hooks: [{ type: 'command', command: hookCommand() }] };
+  const hooks = { ...settings.hooks };
+  // PermissionRequest fires only when Claude is about to ask. 0.1.5 and earlier installed a PreToolUse hook instead.
+  for (const event of ['PreToolUse', 'PermissionRequest']) {
+    const want = install && event === 'PermissionRequest';
+    const list = (hooks[event] ?? []).filter((e) => !ours(e) || (want && JSON.stringify(e) === JSON.stringify(entry)));
+    if (want && !list.some(ours)) list.push(entry);
+    if (list.length) hooks[event] = list;
+    else delete hooks[event];
+  }
+  settings.hooks = hooks;
   if (!Object.keys(settings.hooks).length) delete settings.hooks;
   if (JSON.stringify(settings) === before) return undefined;
   try {
@@ -417,6 +460,15 @@ export function activate(context: vscode.ExtensionContext): void {
   syncHooks();
   statusBar.show();
   say(`Activated; auto-accept is ${enabled ? 'ON' : 'OFF'}${cfg().get<boolean>('dryRun', false) ? ' (dry run)' : ''}`);
+  // Count chat approvals made from now on, and keep the shared file small.
+  try {
+    if (fs.statSync(decisionsFile()).size > 1_000_000) fs.truncateSync(decisionsFile(), 0);
+    decisionsRead = fs.statSync(decisionsFile()).size;
+  } catch {
+    decisionsRead = 0; // no decisions yet
+  }
+  fs.watchFile(decisionsFile(), { interval: 1000 }, readDecisions);
+  context.subscriptions.push({ dispose: () => fs.unwatchFile(decisionsFile(), readDecisions) });
 
   const reg = (id: string, fn: () => unknown) => vscode.commands.registerCommand(id, fn);
   for (const prefix of ['ai-auto-accept', 'claude-auto-accept']) {
